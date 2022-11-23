@@ -1,0 +1,7 @@
+target/
+
+/core/lexer/Cargo.lock
+/core/vm/Cargo.lock
+/core/compiler/Cargo.lock
+/core/parser/Cargo.lock
+/Cargo.lock

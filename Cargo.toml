@@ -1,0 +1,9 @@
+[workspace]
+
+members = [
+  "palacinke",
+  "core/parser",
+  "core/lexer",
+  "core/compiler",
+  "core/vm",
+]
