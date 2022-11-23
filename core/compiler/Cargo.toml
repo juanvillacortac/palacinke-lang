@@ -2,7 +2,7 @@
 name = "pk_compiler"
 version = "0.0.2-dev.1"
 edition = "2021"
-repository = "https://github.com/juanvillacortac/palacinke"
+repository = "https://github.com/juanvillacortac/palacinke-lang"
 description = "The Palacinke lang bytecode compiler"
 license = "MIT"
 authors = ["juanvillacortac@gmail.com"]
@@ -10,4 +10,4 @@ authors = ["juanvillacortac@gmail.com"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-pk_parser = { version = "0.0.2-dev", path = "../parser" }
+pk_parser = { version = "0.0.2-dev.1", path = "../parser" }
