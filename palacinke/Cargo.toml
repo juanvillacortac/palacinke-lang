@@ -3,9 +3,9 @@ name = "palacinke"
 version = "0.0.2-dev.1"
 edition = "2021"
 repository = "https://github.com/juanvillacortac/palacinke"
-author = "juanvillacortac@gmail.com"
 description = "Palacinke: the useless scripting lang"
 license = "MIT"
+authors = ["juanvillacortac@gmail.com"]
 
 [[bin]]
 name = "palacinke"

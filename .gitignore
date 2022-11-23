@@ -4,4 +4,9 @@ target/
 /core/vm/Cargo.lock
 /core/compiler/Cargo.lock
 /core/parser/Cargo.lock
+/core/lexer/target
+/core/vm/target
+/core/compiler/target
+/core/parser/target
+/palacinke/target
 /Cargo.lock

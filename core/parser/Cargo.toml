@@ -3,9 +3,9 @@ name = "pk_parser"
 version = "0.0.2-dev.1"
 edition = "2021"
 repository = "https://github.com/juanvillacortac/palacinke"
-author = "juanvillacortac@gmail.com"
 description = "The Palacinke lang parser"
 license = "MIT"
+authors = ["juanvillacortac@gmail.com"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
