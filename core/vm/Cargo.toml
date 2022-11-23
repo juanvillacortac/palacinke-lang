@@ -2,6 +2,10 @@
 name = "pk_vm"
 version = "0.0.2-dev.1"
 edition = "2021"
+repository = "https://github.com/juanvillacortac/palacinke"
+author = "juanvillacortac@gmail.com"
+description = "The Palacinke lang bytecode virtual machine"
+license = "MIT"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
