@@ -1,6 +1,6 @@
 [package]
 name = "pk_lexer"
-version = "0.0.1-dev.0"
+version = "0.0.3-dev.0"
 edition = "2021"
 repository = "https://github.com/juanvillacortac/palacinke-lang"
 description = "The Palacinke lang lexer"
