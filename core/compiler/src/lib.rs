@@ -1,14 +1,22 @@
 pub mod code;
 pub mod errors;
 pub mod objects;
+pub mod symbols_table;
+
+use std::{cell::RefCell, rc::Rc, vec};
 
 use code::*;
 use errors::*;
 use objects::{Float, Object};
 use pk_parser::ast::*;
+use symbols_table::SymbolTable;
 
 pub type CompiledInstructions = Vec<u8>;
-pub type ConstantsPool = Vec<Object>;
+pub type ConstantsPool = Vec<Rc<Object>>;
+
+pub fn new_constants_pool() -> ConstantsPool {
+    vec![]
+}
 
 #[derive(Debug, Clone)]
 pub struct EmitedInstruction(Instruction, usize);
@@ -21,24 +29,36 @@ pub struct CompiledBytecode {
 
 pub struct Compiler {
     instructions: CompiledInstructions,
-    constants: ConstantsPool,
+    constants: Rc<RefCell<ConstantsPool>>,
     last_instruction: Option<EmitedInstruction>,
     previous_instruction: Option<EmitedInstruction>,
+    symbols_table: Rc<RefCell<SymbolTable>>,
 }
 
 impl Compiler {
     pub fn new() -> Self {
         Compiler {
             instructions: vec![],
-            constants: vec![],
+            constants: Rc::new(RefCell::new(vec![])),
             last_instruction: None,
             previous_instruction: None,
+            symbols_table: Rc::new(RefCell::new(SymbolTable::new())),
         }
     }
+    pub fn new_with_state(
+        symbols_table: Rc<RefCell<SymbolTable>>,
+        constants: Rc<RefCell<ConstantsPool>>,
+    ) -> Self {
+        let mut compiler = Self::new();
+        compiler.symbols_table = Rc::clone(&symbols_table);
+        compiler.constants = Rc::clone(&constants);
+        compiler
+    }
+
     fn get_bytecode(&self) -> CompiledBytecode {
         return CompiledBytecode {
             instructions: self.instructions.clone(),
-            constants: self.constants.clone(),
+            constants: self.constants.borrow().clone(),
         };
     }
 
@@ -64,8 +84,8 @@ impl Compiler {
     }
 
     fn add_constant(&mut self, obj: Object) -> usize {
-        self.constants.push(obj);
-        self.constants.len() - 1
+        self.constants.borrow_mut().push(Rc::new(obj));
+        self.constants.borrow().len() - 1
     }
 
     fn replace_instructions(&mut self, pos: usize, new_instructions: CompiledInstructions) {
@@ -106,6 +126,15 @@ impl Compiler {
 
     pub fn compile_statement(&mut self, statement: &Statement) -> Option<CompilationError> {
         match statement {
+            Statement::Let(Ident(ident), expr) => {
+                let err = self.compile_expression(expr);
+                if err.is_some() {
+                    return err;
+                }
+                let symbol = self.symbols_table.borrow_mut().define(ident);
+                self.emit(Instruction::SetGlobal, &vec![symbol.index]);
+                None
+            }
             Statement::Expression(expr) => {
                 let err = self.compile_expression(expr);
                 if err.is_none() {
@@ -125,6 +154,17 @@ impl Compiler {
             Expression::Prefix(_, _) => self.compile_prefix(expr),
             Expression::Infix(_, _, _) => self.compile_infix_expr(expr),
             Expression::Literal(literal) => self.compile_literal(literal),
+            Expression::Ident(Ident(ident)) => {
+                let symbol = self.symbols_table.borrow().resolve(ident);
+                if symbol.is_none() {
+                    return Some(CompilationError::new(
+                        CompilationErrorKind::UnresolvedSymbol,
+                        format!("variable {} is not defined", ident),
+                    ));
+                }
+                self.emit(Instruction::GetGlobal, &vec![symbol.unwrap().index]);
+                None
+            }
             Expression::If { .. } => self.compile_if_expr(expr),
             stmt => Some(CompilationError::new(
                 CompilationErrorKind::UnresolvedSymbol,
@@ -160,27 +200,26 @@ impl Compiler {
 
         self.remove_last_pop();
 
+        let jump_pos = self.emit(Instruction::Jump, &vec![9999 as usize]);
+
+        let after_cons_pos = self.instructions.len();
+        self.replace_operands(jump_not_pos, &vec![after_cons_pos]);
+
         match alternative {
             Some(alternative) => {
-                let jump_pos = self.emit(Instruction::Jump, &vec![9999 as usize]);
-
-                let after_cons_pos = self.instructions.len();
-                self.replace_operands(jump_not_pos, &vec![after_cons_pos]);
-
                 match self.compile_block(&alternative) {
                     Some(err) => return Some(err),
                     _ => {}
                 }
                 self.remove_last_pop();
-
-                let after_alt_pos = self.instructions.len();
-                self.replace_operands(jump_pos, &vec![after_alt_pos]);
             }
             None => {
-                let after_cons_pos = self.instructions.len();
-                self.replace_operands(jump_not_pos, &vec![after_cons_pos]);
+                self.emit(Instruction::Nil, &vec![]);
             }
-        }
+        };
+
+        let after_alt_pos = self.instructions.len();
+        self.replace_operands(jump_pos, &vec![after_alt_pos]);
 
         None
     }
@@ -286,6 +325,10 @@ impl Compiler {
                     },
                     &vec![],
                 );
+                None
+            }
+            Literal::Nil => {
+                self.emit(Instruction::Nil, &vec![]);
                 None
             }
             _ => None,

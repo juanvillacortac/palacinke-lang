@@ -1,5 +1,7 @@
 pub mod errors;
 
+use std::{cell::RefCell, ops::Deref, rc::Rc};
+
 use errors::*;
 use pk_compiler::{
     code::{ByteEndianness, Instruction, InstructionPacker},
@@ -8,12 +10,21 @@ use pk_compiler::{
 };
 
 const STACK_SIZE: usize = 2048;
+const GLOBALS_SIZE: usize = 65536;
+
+pub type GlobalsStore = Vec<Option<Object>>;
+pub type Stack = Vec<Option<Object>>;
+
+pub fn new_globals_store() -> GlobalsStore {
+    vec![None; GLOBALS_SIZE]
+}
 
 pub struct VM {
     constants: ConstantsPool,
     instructions: CompiledInstructions,
 
-    stack: Vec<Option<Object>>,
+    globals: Rc<RefCell<GlobalsStore>>,
+    stack: Stack,
     sp: usize,
 
     packer: InstructionPacker,
@@ -25,9 +36,19 @@ impl VM {
             instructions: bytecode.instructions,
             constants: bytecode.constants,
             stack: vec![None; STACK_SIZE],
+            globals: Rc::new(RefCell::new(new_globals_store())),
             sp: 0,
             packer: InstructionPacker(ByteEndianness::Big),
         }
+    }
+
+    pub fn new_with_globals(
+        bytecode: CompiledBytecode,
+        globals: Rc<RefCell<GlobalsStore>>,
+    ) -> Self {
+        let mut vm = Self::new(bytecode);
+        vm.globals = Rc::clone(&globals);
+        vm
     }
 
     pub fn last_popped(&self) -> Option<Object> {
@@ -50,12 +71,33 @@ impl VM {
                 .packer
                 .decode_instruction(&op, &self.instructions[ip + 1..]);
 
+            // dbg!(&op);
+
             match op {
                 Instruction::Const => {
-                    let err = self.push(self.constants[operands[0]].clone());
+                    let err = self.push(&self.constants[operands[0]].clone());
                     if err.is_some() {
                         return err;
                     }
+                }
+                Instruction::SetGlobal => {
+                    ip += 3;
+                    self.globals.deref().borrow_mut()[operands[0]] = self.pop();
+                    continue;
+                }
+                Instruction::GetGlobal => {
+                    ip += 3;
+                    match (*self.globals).to_owned().borrow().get(operands[0]) {
+                        Some(Some(obj)) => {
+                            if let Some(err) = self.push(&obj) {
+                                return Some(err.clone());
+                            }
+                        }
+                        _ => {
+                            self.push(&Object::Nil);
+                        }
+                    }
+                    continue;
                 }
                 Instruction::Add
                 | Instruction::Sub
@@ -77,20 +119,26 @@ impl VM {
                     }
                 }
                 Instruction::True => {
-                    self.push(Object::Boolean(true));
+                    self.push(&Object::Boolean(true));
                 }
                 Instruction::False => {
-                    self.push(Object::Boolean(false));
+                    self.push(&Object::Boolean(false));
+                }
+                Instruction::Nil => {
+                    self.push(&Object::Nil);
                 }
                 Instruction::Not => {
                     let obj = self.pop();
                     if obj.is_some() {
                         match obj.unwrap() {
                             Object::Boolean(val) => {
-                                self.push(Object::Boolean(!val));
+                                self.push(&Object::Boolean(!val));
+                            }
+                            Object::Nil => {
+                                self.push(&Object::Boolean(true));
                             }
                             _ => {
-                                self.push(Object::Boolean(false));
+                                self.push(&Object::Boolean(false));
                             }
                         }
                     }
@@ -100,7 +148,7 @@ impl VM {
                     if obj.is_some() {
                         match obj.unwrap() {
                             Object::Number(Float(val)) => {
-                                self.push(Object::Number(Float(-val)));
+                                self.push(&Object::Number(Float(-val)));
                             }
                             obj => {
                                 return Some(VMError::new(
@@ -117,7 +165,21 @@ impl VM {
                 Instruction::Pop => {
                     self.pop();
                 }
-                _ => {}
+                Instruction::Jump => {
+                    ip = operands[0];
+                    continue;
+                }
+                Instruction::JumpNot => {
+                    ip += 2;
+                    let obj = self.pop();
+                    match obj {
+                        Some(Object::Boolean(false) | Object::Nil) => {
+                            ip = operands[0] - 1;
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
             }
 
             ip += next_offset + 1;
@@ -125,14 +187,14 @@ impl VM {
         None
     }
 
-    fn push(&mut self, obj: Object) -> Option<VMError> {
+    fn push(&mut self, obj: &Object) -> Option<VMError> {
         if self.sp >= STACK_SIZE {
             return Some(VMError::new(
                 VMErrorKind::RuntimeError,
                 "stack overflow".to_string(),
             ));
         }
-        self.stack[self.sp] = Some(obj);
+        self.stack[self.sp] = Some(obj.clone());
         self.sp += 1;
         None
     }
@@ -153,19 +215,19 @@ impl VM {
             use Object::*;
             match op {
                 Instruction::Eq => {
-                    self.push(Object::Boolean(left == right));
+                    self.push(&Object::Boolean(left == right));
                 }
                 Instruction::Neq => {
-                    self.push(Object::Boolean(left != right));
+                    self.push(&Object::Boolean(left != right));
                 }
                 _ => match (&left, &right) {
                     (Number(_), Number(_)) => self.exec_binary_numeric_op(&op, &left, &right),
                     (Boolean(left), Boolean(right)) => match op {
                         Instruction::And => {
-                            self.push(Object::Boolean(*left && *right));
+                            self.push(&Object::Boolean(*left && *right));
                         }
                         Instruction::Or => {
-                            self.push(Object::Boolean(*left || *right));
+                            self.push(&Object::Boolean(*left || *right));
                         }
                         _ => {}
                     },
@@ -189,34 +251,34 @@ impl VM {
         };
         match op {
             Instruction::Add => {
-                self.push(Object::Number(Float(left + right)));
+                self.push(&Object::Number(Float(left + right)));
             }
             Instruction::Sub => {
-                self.push(Object::Number(Float(left - right)));
+                self.push(&Object::Number(Float(left - right)));
             }
             Instruction::Div => {
-                self.push(Object::Number(Float(left / right)));
+                self.push(&Object::Number(Float(left / right)));
             }
             Instruction::Mul => {
-                self.push(Object::Number(Float(left * right)));
+                self.push(&Object::Number(Float(left * right)));
             }
             Instruction::Pow => {
-                self.push(Object::Number(Float(left.powf(*right))));
+                self.push(&Object::Number(Float(left.powf(*right))));
             }
             Instruction::Mod => {
-                self.push(Object::Number(Float(left % right)));
+                self.push(&Object::Number(Float(left % right)));
             }
             Instruction::Lt => {
-                self.push(Object::Boolean(left < right));
+                self.push(&Object::Boolean(left < right));
             }
             Instruction::Gt => {
-                self.push(Object::Boolean(left > right));
+                self.push(&Object::Boolean(left > right));
             }
             Instruction::Lte => {
-                self.push(Object::Boolean(left <= right));
+                self.push(&Object::Boolean(left <= right));
             }
             Instruction::Gte => {
-                self.push(Object::Boolean(left >= right));
+                self.push(&Object::Boolean(left >= right));
             }
             _ => {}
         }

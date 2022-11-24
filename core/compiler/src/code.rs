@@ -10,6 +10,12 @@ pub enum Instruction {
     Const,
     Pop,
 
+    SetGlobal,
+    GetGlobal,
+
+    Jump,
+    JumpNot,
+
     Add,
     Mul,
     Sub,
@@ -19,6 +25,8 @@ pub enum Instruction {
 
     True,
     False,
+
+    Nil,
 
     Lt,
     Gt,
@@ -31,9 +39,6 @@ pub enum Instruction {
 
     Negative,
     Not,
-
-    Jump,
-    JumpNot,
 }
 
 impl Instruction {
@@ -139,13 +144,16 @@ impl Instruction {
             Self::Not => "NOT".to_string(),
             Self::Jump => "JUMP".to_string(),
             Self::JumpNot => "JUMP_NOT".to_string(),
+            Self::Nil => "NIL".to_string(),
+            Self::GetGlobal => "GET_GLOBAL".to_string(),
+            Self::SetGlobal => "SET_GLOBAL".to_string(),
         }
     }
 
     #[allow(dead_code)]
     pub fn get_encoding_width(&self) -> Vec<u8> {
         match self {
-            Self::Const | Self::Jump | Self::JumpNot => vec![2],
+            Self::Const | Self::Jump | Self::JumpNot | Self::SetGlobal | Self::GetGlobal => vec![2],
             Self::Pop
             | Self::Add
             | Self::Sub
@@ -164,7 +172,8 @@ impl Instruction {
             | Self::And
             | Self::Or
             | Self::Not
-            | Self::Negative => vec![],
+            | Self::Negative
+            | Self::Nil => vec![],
         }
     }
 
