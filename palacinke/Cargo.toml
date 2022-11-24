@@ -1,6 +1,6 @@
 [package]
 name = "palacinke"
-version = "0.0.1-dev.0"
+version = "0.0.2-dev.0"
 edition = "2021"
 repository = "https://github.com/juanvillacortac/palacinke-lang"
 description = "Palacinke: the useless scripting lang"
@@ -16,8 +16,8 @@ path = "src/bin/palacinke.rs"
 [dependencies]
 clap = { version = "4.0.26", features = ["derive"] }
 colored = "2.0.0"
-pk_compiler = { version = "0.0.1-dev.0", path = "../core/compiler" }
+pk_compiler = { version = "0.0.2-dev.0", path = "../core/compiler" }
 pk_parser = { version = "0.0.1-dev.0", path = "../core/parser" }
-pk_vm = { version = "0.0.1-dev.0", path = "../core/vm" }
+pk_vm = { version = "0.0.2-dev.0", path = "../core/vm" }
 platform-dirs = "0.3.0"
 rustyline = "10.0.0"
