@@ -15,6 +15,11 @@ fn test() {
 }
 
 #[derive(Logos, PartialEq, Clone, Debug)]
+#[logos(subpattern decimal = r"[0-9][_0-9]*")]
+#[logos(subpattern hex = r"[0-9a-fA-F][_0-9a-fA-F]*")]
+#[logos(subpattern octal = r"[0-7][_0-7]*")]
+#[logos(subpattern binary = r"[0-1][_0-1]*")]
+#[logos(subpattern exp = r"[eE][+-]?[0-9][_0-9]*")]
 pub enum RawToken {
     // Keywords
     #[token("fn")]
@@ -107,6 +112,10 @@ pub enum RawToken {
     Ident(String),
     #[regex("([0-9]+([.][0-9]*)?|[.][0-9]+)", |lex| lex.slice().parse())]
     Number(f64),
+    #[regex("0[xX](?&hex)", |lex| i64::from_str_radix(lex.slice().trim_start_matches("0X").trim_start_matches("0x"), 16).unwrap() as f64)]
+    HexInteger(f64),
+    // #[regex(r"0[xX](((?&hex))|((?&hex)\.)|((?&hex)?\.(?&hex)))[pP][+-]?(?&decimal)[fFdD]?")]
+    // HexFloat(f64),
     #[regex(r#""(?:[^"]|\\")*""#, |lex| String::from(lex.slice()))]
     #[regex(r#"'(?:[^']|\\")*'"#, |lex| String::from(lex.slice()))]
     String(String),

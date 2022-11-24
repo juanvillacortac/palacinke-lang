@@ -82,7 +82,7 @@ impl Parser {
         // parse prefixes
         let mut left = match current {
             RawToken::Ident(_) => self.parse_ident_expr(),
-            RawToken::Number(_) => self.parse_number_expr(),
+            RawToken::Number(_) | RawToken::HexInteger(_) => self.parse_number_expr(),
             RawToken::String(_) => self.parse_string_expr(),
             RawToken::Nil => self.parse_nil_expr(),
             RawToken::True | RawToken::False => self.parse_boolean_expr(),
@@ -498,7 +498,9 @@ impl Parser {
     fn parse_number_expr(&mut self) -> Option<Expression> {
         match self.current_token() {
             Some((token, _)) => match token {
-                RawToken::Number(number) => Some(Expression::Literal(Literal::Number(number))),
+                RawToken::Number(number) | RawToken::HexInteger(number) => {
+                    Some(Expression::Literal(Literal::Number(number)))
+                }
                 _ => None,
             },
             None => None,
