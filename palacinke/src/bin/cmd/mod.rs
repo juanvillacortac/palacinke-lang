@@ -1,5 +1,6 @@
 use clap::{command, Parser, Subcommand};
 
+mod build;
 mod repl;
 mod run;
 
@@ -16,6 +17,18 @@ enum Commands {
     #[command(about = "Eval a script")]
     Run { path: String },
 
+    #[command(about = "Compile a script to bytecode", arg_required_else_help = true)]
+    Build {
+        #[arg(required = true)]
+        path: String,
+        #[arg(
+            long,
+            short = 'o',
+            help = "if the output extension ends with \".pks\" the script will be compiled to IR instead"
+        )]
+        output: Option<String>,
+    },
+
     #[command(about = "Enter to the repl mode")]
     Repl,
 }
@@ -26,6 +39,9 @@ pub fn start() {
         Some(command) => match command {
             Commands::Run { path } => {
                 run::run(&path);
+            }
+            Commands::Build { path, output } => {
+                build::build(&path, output.clone());
             }
             Commands::Repl => {
                 repl::start();

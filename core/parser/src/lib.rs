@@ -86,9 +86,7 @@ impl Parser {
             RawToken::String(_) => self.parse_string_expr(),
             RawToken::Nil => self.parse_nil_expr(),
             RawToken::True | RawToken::False => self.parse_boolean_expr(),
-            RawToken::Plus | RawToken::Bang | RawToken::Minus | RawToken::Dollar => {
-                self.parse_prefix_expr()
-            }
+            RawToken::Plus | RawToken::Bang | RawToken::Minus => self.parse_prefix_expr(),
             RawToken::ParenL => self.parse_grouped_expr(),
             RawToken::BracketL => self.parse_array_expr(),
             RawToken::BraceL => self.parse_hash_expr(),
@@ -449,17 +447,12 @@ impl Parser {
             RawToken::Bang => Prefix::Not,
             RawToken::Minus => Prefix::Minus,
             RawToken::Plus => Prefix::Plus,
-            RawToken::Dollar => Prefix::Dollar,
             _ => return None,
         };
 
         self.step();
 
-        match self.parse_expression(if current == RawToken::Dollar {
-            Precedence::Highest
-        } else {
-            Precedence::Prefix
-        }) {
+        match self.parse_expression(Precedence::Prefix) {
             Some(expr) => Some(Expression::Prefix(prefix, Box::new(expr))),
             None => None,
         }

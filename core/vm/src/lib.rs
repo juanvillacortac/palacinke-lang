@@ -70,21 +70,19 @@ impl<'a> VM<'a> {
         if push_result.is_err() {
             return Some(push_result.unwrap_err());
         }
-
-        // dbg!(&self.call_stack);
         return None;
     }
 
     pub fn eval_from_context(ctx: &mut VMContext) -> Result<Rc<Object>, VMError> {
         while ctx.call_stack.top_ref().has_instructions() {
-            let (op, operands, next_offset) = ctx.call_stack.top_ref().read_current_instruction();
+            let ins = ctx.call_stack.top_ref().read_current_instruction();
 
-            match ctx.exec_instruction(&op, &operands) {
+            match ctx.exec_instruction(&ins) {
                 Some(err) => return Err(err),
                 _ => {}
             };
 
-            ctx.call_stack.top().forward_ip(&op, next_offset);
+            ctx.call_stack.top().forward_ip(&ins);
         }
         match &ctx.data_stack.last_popped {
             Some(popped_result) => Ok(popped_result.clone()),

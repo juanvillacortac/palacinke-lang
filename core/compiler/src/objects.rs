@@ -4,8 +4,6 @@ use std::{
     hash::{Hash, Hasher},
 };
 
-use pk_parser::ast::*;
-
 use crate::CompiledInstructions;
 
 pub type BuiltinFunc = fn(Vec<Object>) -> Object;
@@ -17,7 +15,6 @@ pub enum Object {
     Boolean(bool),
     Array(Vec<Object>),
     Hash(HashMap<Object, Object>),
-    Func(Vec<Ident>, BlockStatement),
     CompiledFunction {
         instructions: CompiledInstructions,
         locals: usize,
@@ -60,7 +57,7 @@ impl fmt::Display for Object {
                         .join(", ")
                 )
             }
-            Object::Func(..) | Object::CompiledFunction { .. } => {
+            Object::CompiledFunction { .. } => {
                 write!(f, "[Function]")
             }
             Object::Builtin(..) => {
@@ -87,9 +84,7 @@ impl Object {
             Object::Boolean(_) => "boolean".to_string(),
             Object::Array(_) => "array".to_string(),
             Object::Hash(_) => "hash".to_string(),
-            Object::Func(..) | Object::Builtin(..) | Object::CompiledFunction { .. } => {
-                "fn".to_string()
-            }
+            Object::Builtin(..) | Object::CompiledFunction { .. } => "fn".to_string(),
             Object::ReturnValue(_) => "return".to_string(),
             Object::Error(_) => "error".to_string(),
             Object::Nil => "nil".to_string(),

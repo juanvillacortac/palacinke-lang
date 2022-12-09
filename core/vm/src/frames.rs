@@ -1,11 +1,8 @@
-use pk_compiler::{
-    code::{ByteEndianness, Instruction, InstructionPacker, Operands},
-    CompiledInstructions,
-};
+use pk_compiler::code::{CompiledInstructions, Instruction};
 
 #[derive(Debug, Clone)]
 pub struct Frame {
-    pub instructions: CompiledInstructions,
+    pub instructions: Vec<Instruction>,
     pub ip: usize,
     pub bp: i64,
 }
@@ -13,7 +10,7 @@ pub struct Frame {
 impl Frame {
     pub fn new(instructions: CompiledInstructions, bp: i64) -> Self {
         Self {
-            instructions,
+            instructions: Instruction::decompile_instructions(&instructions).unwrap(),
             ip: 0,
             bp,
         }
@@ -26,34 +23,19 @@ impl Frame {
         self.ip = cb(self.ip);
     }
 
-    pub fn forward_ip(&mut self, op: &Instruction, offset: usize) {
+    pub fn forward_ip(&mut self, op: &Instruction) {
         match op {
-            Instruction::SetGlobal
-            | Instruction::GetGlobal
-            | Instruction::SetLocal
-            | Instruction::GetLocal
-            | Instruction::Jump
-            | Instruction::JumpNot
-            | Instruction::Array
-            | Instruction::Hash => {
-                self.ip += 1;
-            }
-            Instruction::Call => {
+            Instruction::Call(_) => {
                 self.ip = 0;
             }
             _ => {
-                self.ip += offset + 1;
+                self.ip += 1;
             }
         }
     }
 
-    pub fn read_current_instruction(&self) -> (Instruction, Operands, usize) {
-        let decoded_opcode: Instruction = Instruction::from_u8(self.instructions[self.ip]);
-
-        let (operands, next_offset) = InstructionPacker(ByteEndianness::Big)
-            .decode_instruction(&decoded_opcode, &self.instructions[self.ip + 1..]);
-
-        return (decoded_opcode, operands, next_offset);
+    pub fn read_current_instruction(&self) -> Instruction {
+        self.instructions[self.ip].clone()
     }
 
     pub fn has_instructions(&self) -> bool {

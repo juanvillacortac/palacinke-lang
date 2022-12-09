@@ -54,7 +54,6 @@ pub enum Prefix {
     Plus,
     Minus,
     Not,
-    Dollar,
 }
 
 #[derive(PartialEq, Clone, Debug)]

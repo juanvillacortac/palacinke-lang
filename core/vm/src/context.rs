@@ -1,7 +1,7 @@
-use std::{cell::RefCell, collections::HashMap, ops::Range, process::Command, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, ops::Range, rc::Rc};
 
 use pk_compiler::{
-    code::{Instruction, Operands},
+    code::Instruction,
     objects::{Float, Object},
     symbols_table::ConstantsPool,
 };
@@ -21,13 +21,13 @@ pub struct VMContext<'a> {
 }
 
 impl<'a> VMContext<'a> {
-    pub fn exec_instruction(&mut self, op: &Instruction, operands: &Operands) -> Option<VMError> {
-        match op {
-            Instruction::Const => self.exec_const(&operands),
-            Instruction::SetGlobal => self.exec_set_global(&operands),
-            Instruction::GetGlobal => self.exec_get_global(&operands),
-            Instruction::SetLocal => self.exec_set_local(&operands),
-            Instruction::GetLocal => self.exec_get_local(&operands),
+    pub fn exec_instruction(&mut self, ins: &Instruction) -> Option<VMError> {
+        match ins {
+            Instruction::Const(op) => self.exec_const(*op),
+            Instruction::SetGlobal(op) => self.exec_set_global(*op),
+            Instruction::GetGlobal(op) => self.exec_get_global(*op),
+            Instruction::SetLocal(op) => self.exec_set_local(*op),
+            Instruction::GetLocal(op) => self.exec_get_local(*op),
             Instruction::Add
             | Instruction::Sub
             | Instruction::Mul
@@ -41,41 +41,37 @@ impl<'a> VMContext<'a> {
             | Instruction::Lte
             | Instruction::Gte
             | Instruction::And
-            | Instruction::Or => self.exec_binary_op(&op),
-            Instruction::True | Instruction::False | Instruction::Nil => {
-                self.exec_booleans_objects(&op)
-            }
+            | Instruction::Or => self.exec_binary_op(ins),
+            Instruction::Bool(_) | Instruction::Nil => self.exec_booleans_objects(ins),
             Instruction::Not => self.exec_not(),
             Instruction::Negative => self.exec_negative(),
-            Instruction::ShellCommand => self.exec_shell_command(),
             Instruction::Pop => self.exec_pop(),
-            Instruction::Jump | Instruction::JumpNot => self.exec_jumps(&op, &operands),
-            Instruction::Array => self.exec_array(&operands),
-            Instruction::Hash => self.exec_hash(&operands),
+            Instruction::Jump(_) | Instruction::JumpNot(_) => self.exec_jumps(ins),
+            Instruction::Array(op) => self.exec_array(*op),
+            Instruction::Hash(op) => self.exec_hash(*op),
             Instruction::Index => self.exec_index(),
-            Instruction::Call => self.exec_call(&operands),
-            Instruction::Return | Instruction::ReturnValue => self.exec_returns(&op),
+            Instruction::Call(op) => self.exec_call(*op),
+            Instruction::Return | Instruction::ReturnValue => self.exec_returns(ins),
             #[allow(unreachable_patterns)]
             _ => {
                 return Some(VMError::new(
                     VMErrorKind::IllegalOperation,
-                    format!("instruction \"{}\" not implemented", op.as_string(),),
+                    format!("instruction \"{}\" not implemented", ins.as_string(),),
                 ));
             }
         }
     }
-    fn exec_const(&mut self, operands: &Operands) -> Option<VMError> {
-        let obj = self.constants.get_object(operands[0]);
+    fn exec_const(&mut self, operand: u16) -> Option<VMError> {
+        let obj = self.constants.get_object(operand as usize);
         self.data_stack.push_object(obj.unwrap())
     }
-    fn exec_set_global(&mut self, operands: &Operands) -> Option<VMError> {
-        self.call_stack.top().ip += 2;
-        self.globals[operands[0]] = Some(self.data_stack.pop_object().unwrap().as_ref().clone());
+    fn exec_set_global(&mut self, operand: u16) -> Option<VMError> {
+        self.globals[operand as usize] =
+            Some(self.data_stack.pop_object().unwrap().as_ref().clone());
         None
     }
-    fn exec_get_global(&mut self, operands: &Operands) -> Option<VMError> {
-        self.call_stack.top().ip += 2;
-        match &self.globals[operands[0]] {
+    fn exec_get_global(&mut self, operand: u16) -> Option<VMError> {
+        match &self.globals[operand as usize] {
             Some(obj) => {
                 if let Some(err) = self.data_stack.push_object(Rc::new(obj.clone())) {
                     return Some(err.clone());
@@ -87,20 +83,17 @@ impl<'a> VMContext<'a> {
         }
         None
     }
-    fn exec_set_local(&mut self, operands: &Operands) -> Option<VMError> {
-        self.call_stack.top().ip += 2;
+    fn exec_set_local(&mut self, operand: u16) -> Option<VMError> {
         let frame = self.call_stack.top_ref().clone();
-        self.data_stack.stack[(frame.bp - 1) as usize + operands[0]] =
-            self.data_stack.pop_object().unwrap();
+        self.data_stack.stack[(frame.bp) as usize + operand as usize] = self.data_stack.top();
         None
     }
-    fn exec_get_local(&mut self, operands: &Operands) -> Option<VMError> {
-        self.call_stack.top().ip += 2;
+    fn exec_get_local(&mut self, operands: u16) -> Option<VMError> {
         let frame = self.call_stack.top_ref().clone();
         match self
             .data_stack
             .stack
-            .get((frame.bp - 1) as usize + operands[0])
+            .get((frame.bp) as usize + operands as usize)
             .cloned()
         {
             Some(obj) => {
@@ -131,7 +124,13 @@ impl<'a> VMContext<'a> {
                         self.exec_binary_numeric_op(&op, &left, &right);
                         None
                     }
-                    (String(left), String(right), _) => self
+                    (String(left), String(right), Instruction::Add) => self
+                        .data_stack
+                        .push_object(Rc::new(Object::String(format!("{}{}", left, right)))),
+                    (String(left), right, Instruction::Add) => self
+                        .data_stack
+                        .push_object(Rc::new(Object::String(format!("{}{}", left, right)))),
+                    (left, String(right), Instruction::Add) => self
                         .data_stack
                         .push_object(Rc::new(Object::String(format!("{}{}", left, right)))),
                     (left, right, Instruction::Add) => self
@@ -210,11 +209,8 @@ impl<'a> VMContext<'a> {
     }
     fn exec_booleans_objects(&mut self, op: &Instruction) -> Option<VMError> {
         match op {
-            Instruction::True => {
-                self.data_stack.push_object(Rc::new(Object::Boolean(true)));
-            }
-            Instruction::False => {
-                self.data_stack.push_object(Rc::new(Object::Boolean(false)));
+            Instruction::Bool(val) => {
+                self.data_stack.push_object(Rc::new(Object::Boolean(*val)));
             }
             Instruction::Nil => {
                 self.data_stack.push_object(Rc::new(Object::Nil));
@@ -228,17 +224,17 @@ impl<'a> VMContext<'a> {
         self.data_stack.pop_object();
         None
     }
-    fn exec_jumps(&mut self, op: &Instruction, operands: &Operands) -> Option<VMError> {
+    fn exec_jumps(&mut self, op: &Instruction) -> Option<VMError> {
         match op {
-            Instruction::Jump => {
-                self.call_stack.top().ip = operands[0] - 1;
+            Instruction::Jump(idx) => {
+                self.call_stack.top().ip = *idx as usize - 1;
             }
-            Instruction::JumpNot => {
-                self.call_stack.top().ip += 2;
+            Instruction::JumpNot(idx) => {
+                // self.call_stack.top().ip += 2;
                 let obj = self.data_stack.pop_object();
                 match *obj.unwrap() {
                     Object::Boolean(false) | Object::Nil => {
-                        self.call_stack.top().ip = operands[0] - 1;
+                        self.call_stack.top().ip = *idx as usize - 1;
                     }
                     _ => {}
                 }
@@ -282,65 +278,16 @@ impl<'a> VMContext<'a> {
         };
         None
     }
-    fn exec_shell_command(&mut self) -> Option<VMError> {
-        let obj = self.data_stack.pop_object();
-        if obj.is_some() {
-            match &*obj.unwrap() {
-                Object::String(cmd) => {
-                    let mut hash: HashMap<Object, Object> = HashMap::new();
-                    let splited: Vec<&str> = cmd.split_whitespace().collect();
-                    let mut cmd = &mut Command::new(splited.get(0).unwrap_or(&""));
-                    if splited.len() > 1 {
-                        cmd = cmd.args(&splited[1..]);
-                    }
-                    let output = cmd.output();
-                    match output {
-                        Ok(output) => {
-                            hash.insert(
-                                Object::String("stdout".to_string()),
-                                Object::String(String::from_utf8_lossy(&output.stdout).to_string()),
-                            );
-                            hash.insert(
-                                Object::String("stderr".to_string()),
-                                Object::String(String::from_utf8_lossy(&output.stderr).to_string()),
-                            );
-                            hash.insert(
-                                Object::String("status".to_string()),
-                                Object::Number(Float(output.status.code().unwrap_or(0) as f64)),
-                            );
-                            self.data_stack.push_object(Rc::new(Object::Hash(hash)));
-                        }
-                        Err(err) => {
-                            return Some(VMError::new(VMErrorKind::ShellCommand, err.to_string()))
-                        }
-                    }
-                }
-                obj => {
-                    return Some(VMError::new(
-                        VMErrorKind::IllegalOperation,
-                        format!(
-                            "cannot exec \"{}\" object type as shell command",
-                            obj.type_str()
-                        ),
-                    ))
-                }
-            }
-        };
-        None
-    }
-    fn exec_array(&mut self, operands: &Operands) -> Option<VMError> {
-        self.call_stack.top().ip += 2;
-        dbg!(self.data_stack.stack_pointer, &operands[0]);
+    fn exec_array(&mut self, operand: u16) -> Option<VMError> {
         let array = self.build_array(Range {
-            start: self.data_stack.stack_pointer as usize - operands[0],
+            start: self.data_stack.stack_pointer as usize - operand as usize,
             end: self.data_stack.stack_pointer as usize,
         });
         self.data_stack.push_object(array)
     }
-    fn exec_hash(&mut self, operands: &Operands) -> Option<VMError> {
-        self.call_stack.top().ip += 2;
+    fn exec_hash(&mut self, operand: u16) -> Option<VMError> {
         let hash = self.build_hash(Range {
-            start: self.data_stack.stack_pointer as usize - operands[0],
+            start: self.data_stack.stack_pointer as usize - operand as usize,
             end: self.data_stack.stack_pointer as usize,
         });
         // self.call_stack.stack_pointer -= operands[0] as i64;
@@ -378,20 +325,19 @@ impl<'a> VMContext<'a> {
         self.data_stack
             .push_object(Rc::new(hash.get(index).unwrap_or(&Object::Nil).clone()))
     }
-    fn exec_call(&mut self, operands: &Operands) -> Option<VMError> {
-        let obj = &*self.data_stack.top_offset(operands[0]);
-        // dbg!(&self.data_stack.stack, obj, operands);
+    fn exec_call(&mut self, operand: u16) -> Option<VMError> {
+        let obj = &*self.data_stack.top_offset(operand as usize);
         match obj {
             Object::CompiledFunction {
                 instructions,
                 locals,
             } => {
-                let bp = self.data_stack.stack_pointer;
-                let frame = Frame::new(instructions.clone(), bp);
+                let base_pointer = self.data_stack.stack_pointer;
+                let frame = Frame::new(instructions.clone(), base_pointer - operand as i64);
                 match self.call_stack.push_frame(RefCell::new(frame)) {
                     Err(err) => Some(err),
                     _ => {
-                        self.data_stack.stack_pointer = bp + *locals as i64;
+                        self.data_stack.stack_pointer = base_pointer + *locals as i64;
                         None
                     }
                 }
@@ -402,6 +348,7 @@ impl<'a> VMContext<'a> {
             )),
         }
     }
+
     fn exec_returns(&mut self, op: &Instruction) -> Option<VMError> {
         match op {
             Instruction::Return => {
@@ -411,7 +358,7 @@ impl<'a> VMContext<'a> {
                 }
                 let frame = current_frame_res.unwrap();
 
-                self.data_stack.stack_pointer = frame.borrow().bp - 1;
+                self.data_stack.stack_pointer = frame.borrow().bp;
                 self.data_stack.push_object(Rc::new(Object::Nil))
             }
             Instruction::ReturnValue => {
@@ -429,7 +376,7 @@ impl<'a> VMContext<'a> {
                 let bp = frame.borrow().bp;
                 self.data_stack.stack.truncate(bp as usize);
 
-                self.data_stack.stack_pointer = frame.borrow().bp - 1;
+                self.data_stack.stack_pointer = frame.borrow().bp;
                 self.data_stack.push_object(return_value)
             }
             _ => None,

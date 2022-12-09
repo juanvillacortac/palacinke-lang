@@ -56,8 +56,6 @@ pub enum RawToken {
     Minus,
     #[token("!")]
     Bang,
-    #[token("$")]
-    Dollar,
     #[token("*")]
     Asterisk,
     #[token("/")]

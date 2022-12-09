@@ -10,5 +10,5 @@ let fib = fn(x) {
 	}
 }
 
-// Must print 55
+# Must print 55
 println(fib(10))

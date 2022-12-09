@@ -3,7 +3,7 @@ use std::fs;
 use colored::Colorize;
 use palacinke::utils::*;
 use pk_compiler::symbols_table::{ConstantsPool, SymbolTable};
-use pk_compiler::Compiler;
+use pk_compiler::{BytecodeDecompiler, Compiler};
 use pk_parser::ast::Module;
 use pk_parser::Parser;
 use pk_vm::{new_globals_store, GlobalsStore, VM};
@@ -37,9 +37,16 @@ pub fn start() {
         match readline {
             Ok(line) => {
                 rl.add_history_entry(line.as_str());
-                let mut parser = Parser::from_source(&line.as_str());
+                let source = &line.as_str().strip_prefix(":ir ").unwrap_or(&line.as_str());
+                let mut parser = Parser::from_source(source);
                 match parser.parse() {
-                    Ok(module) => eval(module, &mut symbols_table, &mut constants, &mut globals),
+                    Ok(module) => {
+                        if line.as_str().starts_with(":ir ") {
+                            disasm(module, &mut symbols_table, &mut constants);
+                        } else {
+                            eval(module, &mut symbols_table, &mut constants, &mut globals)
+                        }
+                    }
                     Err(errors) => {
                         print_parse_errors(errors);
                     }
@@ -60,6 +67,18 @@ pub fn start() {
     }
 
     let _ = rl.save_history(history.as_path());
+}
+
+fn disasm(module: Module, symbols_table: &mut SymbolTable, constants: &mut ConstantsPool) {
+    let fallback = (constants.clone(), symbols_table.clone());
+    let mut compiler = Compiler::new(symbols_table, constants);
+    match compiler.compile(module) {
+        Ok(bytecode) => {
+            println!("{}", BytecodeDecompiler::disassemble(&bytecode));
+        }
+        Err(err) => print_compilation_error(err),
+    }
+    (*constants, *symbols_table) = fallback;
 }
 
 fn eval(

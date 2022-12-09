@@ -111,7 +111,6 @@ impl DataStack {
         self.stack.last().unwrap().clone()
     }
     pub fn top_offset(&mut self, offset: usize) -> Rc<Object> {
-        dbg!(self.stack.len(), offset);
         self.stack
             .get((self.stack.len() - offset) - 1)
             .unwrap()

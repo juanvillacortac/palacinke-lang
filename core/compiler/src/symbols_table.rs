@@ -49,10 +49,10 @@ impl SymbolTable {
             scope,
             name: name.to_string(),
         };
-        self.store.insert(name.to_string(), symbol.clone());
         if !self.store.contains_key(&name.to_string()) {
             self.num_defs += 1;
         }
+        self.store.insert(name.to_string(), symbol.clone());
         symbol
     }
 
