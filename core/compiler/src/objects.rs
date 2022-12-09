@@ -6,6 +6,8 @@ use std::{
 
 use pk_parser::ast::*;
 
+use crate::CompiledInstructions;
+
 pub type BuiltinFunc = fn(Vec<Object>) -> Object;
 
 #[derive(PartialEq, Clone, Debug)]
@@ -16,6 +18,10 @@ pub enum Object {
     Array(Vec<Object>),
     Hash(HashMap<Object, Object>),
     Func(Vec<Ident>, BlockStatement),
+    CompiledFunction {
+        instructions: CompiledInstructions,
+        locals: usize,
+    },
     Builtin(i32, BuiltinFunc),
     ReturnValue(Box<Object>),
     Error(String),
@@ -54,7 +60,7 @@ impl fmt::Display for Object {
                         .join(", ")
                 )
             }
-            Object::Func(..) => {
+            Object::Func(..) | Object::CompiledFunction { .. } => {
                 write!(f, "[Function]")
             }
             Object::Builtin(..) => {
@@ -76,15 +82,17 @@ impl fmt::Display for Object {
 impl Object {
     pub fn type_str(&self) -> String {
         match self {
-            Object::Number(_) => "Number".to_string(),
-            Object::String(_) => "String".to_string(),
-            Object::Boolean(_) => "Boolean".to_string(),
-            Object::Array(_) => "Array".to_string(),
-            Object::Hash(_) => "Hash".to_string(),
-            Object::Func(..) | Object::Builtin(..) => "Func".to_string(),
-            Object::ReturnValue(_) => "Return".to_string(),
-            Object::Error(_) => "Error".to_string(),
-            Object::Nil => "Nil".to_string(),
+            Object::Number(_) => "number".to_string(),
+            Object::String(_) => "string".to_string(),
+            Object::Boolean(_) => "boolean".to_string(),
+            Object::Array(_) => "array".to_string(),
+            Object::Hash(_) => "hash".to_string(),
+            Object::Func(..) | Object::Builtin(..) | Object::CompiledFunction { .. } => {
+                "fn".to_string()
+            }
+            Object::ReturnValue(_) => "return".to_string(),
+            Object::Error(_) => "error".to_string(),
+            Object::Nil => "nil".to_string(),
         }
     }
 }

@@ -1,9 +1,12 @@
 use std::fs;
 
 use palacinke::utils::*;
-use pk_compiler::Compiler;
+use pk_compiler::{
+    symbols_table::{ConstantsPool, SymbolTable},
+    Compiler,
+};
 use pk_parser::{ast::Module, Parser};
-use pk_vm::VM;
+use pk_vm::{new_globals_store, VM};
 
 pub fn parse_file(path: &str) -> Option<Module> {
     let buff = match fs::read(path) {
@@ -27,7 +30,9 @@ pub fn parse_file(path: &str) -> Option<Module> {
 }
 
 fn eval(module: Module) {
-    let mut compiler = Compiler::new();
+    let mut symbols_table = SymbolTable::new();
+    let mut constants = ConstantsPool::new();
+    let mut compiler = Compiler::new(&mut symbols_table, &mut constants);
     let bytecode = match compiler.compile(module) {
         Ok(bytecode) => bytecode,
         Err(err) => {
@@ -36,10 +41,11 @@ fn eval(module: Module) {
         }
     };
 
-    let mut vm = VM::new(bytecode);
-    match vm.run() {
-        Some(err) => print_vm_error(err),
-        _ => {}
+    let mut globals = new_globals_store();
+    let mut vm = VM::new_state(&bytecode, &mut globals);
+    match vm.eval() {
+        Ok(_) => {}
+        Err(err) => print_vm_error(err),
     }
 }
 

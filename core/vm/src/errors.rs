@@ -4,6 +4,7 @@ use std::fmt;
 pub enum VMErrorKind {
     RuntimeError,
     IllegalOperation,
+    ShellCommand,
 }
 
 impl fmt::Display for VMErrorKind {
@@ -14,6 +15,9 @@ impl fmt::Display for VMErrorKind {
             }
             VMErrorKind::IllegalOperation => {
                 write!(f, "Illegal operation")
+            }
+            VMErrorKind::ShellCommand => {
+                write!(f, "Shell command execution error")
             }
         }
     }

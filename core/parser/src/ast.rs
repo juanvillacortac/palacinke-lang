@@ -54,6 +54,7 @@ pub enum Prefix {
     Plus,
     Minus,
     Not,
+    Dollar,
 }
 
 #[derive(PartialEq, Clone, Debug)]
@@ -85,4 +86,5 @@ pub enum Precedence {
     Prefix,      // -X or !X
     Call,        // myFunction(x)
     Index,       // array[index]
+    Highest,
 }

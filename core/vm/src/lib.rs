@@ -1,17 +1,16 @@
+mod context;
 pub mod errors;
-mod executors;
+mod frames;
+mod stack;
 
 use std::{cell::RefCell, rc::Rc};
 
+use context::VMContext;
 use errors::*;
-use executors::VMExecutor;
-use pk_compiler::{
-    code::{ByteEndianness, Instruction, InstructionPacker},
-    objects::*,
-    CompiledBytecode, CompiledInstructions, ConstantsPool,
-};
+use frames::Frame;
+use pk_compiler::{objects::*, symbols_table::ConstantsPool, CompiledBytecode};
+use stack::{CallStack, DataStack};
 
-const STACK_SIZE: usize = 2048;
 const GLOBALS_SIZE: usize = 65536;
 
 pub type GlobalsStore = Vec<Option<Object>>;
@@ -21,99 +20,75 @@ pub fn new_globals_store() -> GlobalsStore {
     vec![None; GLOBALS_SIZE]
 }
 
-pub struct VM {
+pub struct VM<'a> {
     constants: ConstantsPool,
-    instructions: CompiledInstructions,
-
-    globals: Rc<RefCell<GlobalsStore>>,
-    stack: Stack,
-    sp: usize,
-    ip: usize,
-
-    packer: InstructionPacker,
+    globals: &'a mut GlobalsStore,
+    data_stack: DataStack,
+    call_stack: CallStack,
 }
 
-impl VM {
-    pub fn new(bytecode: CompiledBytecode) -> Self {
-        Self {
-            instructions: bytecode.instructions,
-            constants: bytecode.constants,
-            stack: vec![None; STACK_SIZE],
-            globals: Rc::new(RefCell::new(new_globals_store())),
-            sp: 0,
-            ip: 0,
-            packer: InstructionPacker(ByteEndianness::Big),
+impl<'a> VM<'a> {
+    pub fn new_state(bytecode: &CompiledBytecode, globals: &'a mut GlobalsStore) -> Self {
+        let mut call_stack = CallStack::new();
+        let data_stack = DataStack::new();
+
+        let main_frame = Frame::new(bytecode.instructions.clone(), 0);
+        let _ = call_stack.push_frame(RefCell::new(main_frame));
+
+        return VM {
+            constants: bytecode.constants.clone(),
+            call_stack,
+            data_stack,
+            globals,
+        };
+    }
+
+    pub fn new_empty_from_state(globals: &'a mut GlobalsStore, constants: ConstantsPool) -> Self {
+        let call_stack = CallStack::new();
+        let data_stack = DataStack::new();
+
+        return VM {
+            constants,
+            call_stack,
+            data_stack,
+            globals,
+        };
+    }
+
+    pub fn eval(&mut self) -> Result<Rc<Object>, VMError> {
+        let mut ctx = VMContext {
+            call_stack: &mut self.call_stack,
+            constants: &mut self.constants,
+            data_stack: &mut self.data_stack,
+            globals: &mut self.globals,
+        };
+        Self::eval_from_context(&mut ctx)
+    }
+
+    pub fn push_new_frame(&mut self, frame: RefCell<Frame>) -> Option<VMError> {
+        let push_result = self.call_stack.push_frame(frame);
+        if push_result.is_err() {
+            return Some(push_result.unwrap_err());
         }
+
+        // dbg!(&self.call_stack);
+        return None;
     }
 
-    pub fn new_with_globals(
-        bytecode: CompiledBytecode,
-        globals: Rc<RefCell<GlobalsStore>>,
-    ) -> Self {
-        let mut vm = Self::new(bytecode);
-        vm.globals = Rc::clone(&globals);
-        vm
-    }
+    pub fn eval_from_context(ctx: &mut VMContext) -> Result<Rc<Object>, VMError> {
+        while ctx.call_stack.top_ref().has_instructions() {
+            let (op, operands, next_offset) = ctx.call_stack.top_ref().read_current_instruction();
 
-    pub fn last_popped(&self) -> Option<Object> {
-        self.stack.get(self.sp).unwrap_or(&None).clone()
-    }
-
-    pub fn stack_top(&self) -> Option<Object> {
-        if self.sp == 0 {
-            return None;
-        }
-        self.stack.get(self.sp - 1).unwrap_or(&None).clone()
-    }
-
-    pub fn forward_ip(&mut self, op: &Instruction, offset: usize) {
-        match op {
-            Instruction::SetGlobal
-            | Instruction::GetGlobal
-            | Instruction::Jump
-            | Instruction::JumpNot => {}
-            _ => {
-                self.ip += offset + 1;
-            }
-        }
-    }
-
-    pub fn run(&mut self) -> Option<VMError> {
-        self.ip = 0;
-        while self.ip < self.instructions.len() {
-            let op: Instruction = Instruction::from_u8(self.instructions[self.ip]);
-
-            let (operands, next_offset) = self
-                .packer
-                .decode_instruction(&op, &self.instructions[self.ip + 1..]);
-
-            match self.exec_instruction(&op, &operands) {
-                Some(err) => return Some(err),
+            match ctx.exec_instruction(&op, &operands) {
+                Some(err) => return Err(err),
                 _ => {}
             };
-            self.forward_ip(&op, next_offset);
-        }
-        None
-    }
 
-    fn push(&mut self, obj: &Object) -> Option<VMError> {
-        if self.sp >= STACK_SIZE {
-            return Some(VMError::new(
-                VMErrorKind::RuntimeError,
-                "stack overflow".to_string(),
-            ));
+            ctx.call_stack.top().forward_ip(&op, next_offset);
         }
-        self.stack[self.sp] = Some(obj.clone());
-        self.sp += 1;
-        None
-    }
-
-    fn pop(&mut self) -> Option<Object> {
-        if self.sp == 0 {
-            return None;
+        match &ctx.data_stack.last_popped {
+            Some(popped_result) => Ok(popped_result.clone()),
+            None => Ok(Rc::new(Object::Nil)),
         }
-        let obj = self.stack.get(self.sp - 1);
-        self.sp -= 1;
-        obj.unwrap_or(&None).clone()
     }
 }

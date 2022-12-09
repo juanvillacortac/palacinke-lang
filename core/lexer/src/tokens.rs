@@ -56,6 +56,8 @@ pub enum RawToken {
     Minus,
     #[token("!")]
     Bang,
+    #[token("$")]
+    Dollar,
     #[token("*")]
     Asterisk,
     #[token("/")]
@@ -120,8 +122,7 @@ pub enum RawToken {
     #[regex(r#"'(?:[^']|\\")*'"#, |lex| String::from(lex.slice()))]
     String(String),
 
-    #[regex(r"//.*\n?", logos::skip)]
-    #[regex(r#"/\*.*\*/"#, logos::skip)]
+    #[regex(r"#.*\n?", logos::skip)]
     #[regex(r"[ \t\n\f]+", logos::skip)]
     #[error]
     Error,

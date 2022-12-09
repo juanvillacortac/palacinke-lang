@@ -1,10 +1,9 @@
-use std::cell::RefCell;
 use std::fs;
-use std::rc::Rc;
 
+use colored::Colorize;
 use palacinke::utils::*;
-use pk_compiler::symbols_table::SymbolTable;
-use pk_compiler::{new_constants_pool, Compiler, ConstantsPool};
+use pk_compiler::symbols_table::{ConstantsPool, SymbolTable};
+use pk_compiler::Compiler;
 use pk_parser::ast::Module;
 use pk_parser::Parser;
 use pk_vm::{new_globals_store, GlobalsStore, VM};
@@ -29,9 +28,9 @@ pub fn start() {
 
     let _ = rl.load_history(history.as_path());
 
-    let symbols_table = Rc::new(RefCell::new(SymbolTable::new()));
-    let constants = Rc::new(RefCell::new(new_constants_pool()));
-    let globals = Rc::new(RefCell::new(new_globals_store()));
+    let mut symbols_table = SymbolTable::new();
+    let mut constants = ConstantsPool::new();
+    let mut globals = new_globals_store();
 
     loop {
         let readline = rl.readline(">> ");
@@ -40,12 +39,7 @@ pub fn start() {
                 rl.add_history_entry(line.as_str());
                 let mut parser = Parser::from_source(&line.as_str());
                 match parser.parse() {
-                    Ok(module) => eval(
-                        module,
-                        symbols_table.to_owned(),
-                        constants.to_owned(),
-                        globals.to_owned(),
-                    ),
+                    Ok(module) => eval(module, &mut symbols_table, &mut constants, &mut globals),
                     Err(errors) => {
                         print_parse_errors(errors);
                     }
@@ -70,24 +64,23 @@ pub fn start() {
 
 fn eval(
     module: Module,
-    symbols_table: Rc<RefCell<SymbolTable>>,
-    constants: Rc<RefCell<ConstantsPool>>,
-    globals: Rc<RefCell<GlobalsStore>>,
+    symbols_table: &mut SymbolTable,
+    constants: &mut ConstantsPool,
+    globals: &mut GlobalsStore,
 ) {
-    let mut compiler = Compiler::new_with_state(symbols_table, constants);
+    let fallback = (constants.clone(), symbols_table.clone());
+    let mut compiler = Compiler::new(symbols_table, constants);
     match compiler.compile(module) {
         Ok(bytecode) => {
-            let mut vm = VM::new_with_globals(bytecode, globals);
-            match vm.run() {
-                None => {
-                    let stack_top = vm.last_popped();
-                    if let Some(value) = stack_top {
-                        println!("{}", value)
-                    }
-                }
-                Some(err) => print_vm_error(err),
+            let mut vm = VM::new_state(&bytecode, globals);
+            match vm.eval() {
+                Ok(result) => println!("{}", format!("{}", result).yellow().bold()),
+                Err(err) => print_vm_error(err),
             }
         }
-        Err(err) => print_compilation_error(err),
+        Err(err) => {
+            (*constants, *symbols_table) = fallback;
+            print_compilation_error(err)
+        }
     }
 }

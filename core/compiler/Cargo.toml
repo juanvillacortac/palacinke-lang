@@ -10,4 +10,5 @@ authors = ["juanvillacortac@gmail.com"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+bytecoding = "0.1.0"
 pk_parser = { version = "0.0.3-dev.0", path = "../parser" }

@@ -10,10 +10,10 @@ pub fn print_parse_errors(errors: ParseErrors) {
     );
     let msg = errors
         .into_iter()
-        .map(|e| format!("{}", e))
+        .map(|e| format!("-> {}", e))
         .collect::<Vec<String>>()
         .join("\n");
-    println!("{}", format!("-> {}", msg).white().bold());
+    println!("{}", msg.white().bold());
 }
 
 pub fn print_vm_error(error: VMError) {

@@ -1,3 +1,5 @@
+use crate::CompiledInstructions;
+
 pub const BYTE_ENDIAN: &'static str = "big";
 pub enum ByteEndianness {
     Big,
@@ -7,11 +9,22 @@ pub enum ByteEndianness {
 #[repr(u8)]
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub enum Instruction {
+    Illegal,
+    Call,
+    Return,
+    ReturnValue,
+
     Const,
     Pop,
 
     SetGlobal,
     GetGlobal,
+    SetLocal,
+    GetLocal,
+
+    Array,
+    Hash,
+    Index,
 
     Jump,
     JumpNot,
@@ -39,6 +52,7 @@ pub enum Instruction {
 
     Negative,
     Not,
+    ShellCommand,
 }
 
 impl Instruction {
@@ -122,41 +136,60 @@ impl Instruction {
     #[allow(dead_code)]
     pub fn as_string(&self) -> String {
         match self {
-            Self::Const => "CONST".to_string(),
-            Self::Pop => "POP".to_string(),
-            Self::Add => "ADD".to_string(),
-            Self::Sub => "SUB".to_string(),
-            Self::Mul => "MUL".to_string(),
-            Self::Div => "DIV".to_string(),
-            Self::Pow => "POW".to_string(),
-            Self::Mod => "MOD".to_string(),
-            Self::True => "TRUE".to_string(),
-            Self::False => "FALSE".to_string(),
-            Self::Gt => "GT".to_string(),
-            Self::Lt => "LT".to_string(),
-            Self::Eq => "EQ".to_string(),
-            Self::Neq => "NEQ".to_string(),
-            Self::Lte => "LTE".to_string(),
-            Self::Gte => "GTE".to_string(),
-            Self::And => "AND".to_string(),
-            Self::Or => "OR".to_string(),
-            Self::Negative => "NEGATIVE".to_string(),
-            Self::Not => "NOT".to_string(),
-            Self::Jump => "JUMP".to_string(),
-            Self::JumpNot => "JUMP_NOT".to_string(),
-            Self::Nil => "NIL".to_string(),
-            Self::GetGlobal => "GET_GLOBAL".to_string(),
-            Self::SetGlobal => "SET_GLOBAL".to_string(),
+            Self::Const => "OpConst".to_string(),
+            Self::Pop => "OpPop".to_string(),
+            Self::Call => "OpCall".to_string(),
+            Self::Return => "OpReturn".to_string(),
+            Self::ReturnValue => "OpReturnValue".to_string(),
+            Self::Add => "OpAdd".to_string(),
+            Self::Sub => "OpSub".to_string(),
+            Self::Mul => "OpMul".to_string(),
+            Self::Div => "OpDiv".to_string(),
+            Self::Pow => "OpPow".to_string(),
+            Self::Mod => "OpMod".to_string(),
+            Self::True => "OpTrue".to_string(),
+            Self::False => "OpFalse".to_string(),
+            Self::Gt => "OpGt".to_string(),
+            Self::Lt => "OpLt".to_string(),
+            Self::Eq => "OpEq".to_string(),
+            Self::Neq => "OpNeq".to_string(),
+            Self::Lte => "OpLte".to_string(),
+            Self::Gte => "OpGte".to_string(),
+            Self::And => "OpAnd".to_string(),
+            Self::Or => "OpOr".to_string(),
+            Self::Negative => "OpNegative".to_string(),
+            Self::Not => "OpNot".to_string(),
+            Self::Jump => "OpJump".to_string(),
+            Self::JumpNot => "OpJumpNot".to_string(),
+            Self::Nil => "OpNil".to_string(),
+            Self::GetGlobal => "OpGetGlobal".to_string(),
+            Self::SetGlobal => "OpSetGlobal".to_string(),
+            Self::GetLocal => "OpGetLocal".to_string(),
+            Self::SetLocal => "OpSetLocal".to_string(),
+            Self::Array => "OpArray".to_string(),
+            Self::Hash => "OpHash".to_string(),
+            Self::Index => "OpIndex".to_string(),
+            Self::ShellCommand => "OpCmd".to_string(),
+            Self::Illegal => "ILLEGAL_OP".to_string(),
         }
     }
 
     #[allow(dead_code)]
     pub fn get_encoding_width(&self) -> Vec<u8> {
         match self {
-            Self::Const | Self::Jump | Self::JumpNot | Self::SetGlobal | Self::GetGlobal => vec![2],
+            Self::Const
+            | Self::Jump
+            | Self::JumpNot
+            | Self::SetGlobal
+            | Self::GetGlobal
+            | Self::Array
+            | Self::Hash => vec![2],
+            Self::Call | Self::SetLocal | Self::GetLocal => vec![1],
             Self::Pop
             | Self::Add
             | Self::Sub
+            | Self::Return
+            | Self::ReturnValue
             | Self::Mul
             | Self::Div
             | Self::Mod
@@ -173,7 +206,10 @@ impl Instruction {
             | Self::Or
             | Self::Not
             | Self::Negative
-            | Self::Nil => vec![],
+            | Self::ShellCommand
+            | Self::Nil
+            | Self::Index
+            | Self::Illegal => vec![],
         }
     }
 
@@ -184,5 +220,24 @@ impl Instruction {
         let opcode = self.as_string();
 
         return format!("{} {}", opcode, op_formatted);
+    }
+
+    pub fn decompile_instructions(
+        endian: ByteEndianness,
+        instructions: &CompiledInstructions,
+    ) -> Vec<(Instruction, Vec<usize>)> {
+        let packer = InstructionPacker(endian);
+        let mut ip = 0 as usize;
+        let mut ins = vec![];
+        while ip < instructions.len() {
+            let op: Instruction = Instruction::from_u8(instructions[ip]);
+
+            let (operands, next_offset) = packer.decode_instruction(&op, &instructions[ip + 1..]);
+
+            ins.push((op, operands));
+
+            ip += next_offset + 1;
+        }
+        ins
     }
 }
