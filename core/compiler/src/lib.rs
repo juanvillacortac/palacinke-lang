@@ -11,12 +11,8 @@ use objects::{Float, Object};
 use pk_parser::ast::*;
 use symbols_table::{ConstantsPool, SymbolScope, SymbolTable};
 
-pub type CompiledInstructions = Vec<u8>;
-
 #[derive(Debug, Clone)]
 pub struct EmitedInstruction(Instruction, usize);
-
-#[derive(Debug, Clone)]
 pub struct CompiledBytecode {
     pub instructions: CompiledInstructions,
     pub constants: ConstantsPool,
@@ -24,7 +20,7 @@ pub struct CompiledBytecode {
 
 #[derive(Debug, Clone)]
 pub struct CompilationScope {
-    instructions: CompiledInstructions,
+    instructions: Vec<Instruction>,
     last_instruction: Option<EmitedInstruction>,
     previous_instruction: Option<EmitedInstruction>,
 }
@@ -53,18 +49,16 @@ impl<'a> Compiler<'a> {
 
     fn get_bytecode(&self) -> CompiledBytecode {
         let bytecode = CompiledBytecode {
-            instructions: self.scopes[self.scope_idx].instructions.clone(),
+            instructions: Instruction::compile_instructions(
+                self.scopes[self.scope_idx].instructions.clone(),
+            ),
             constants: self.constants.clone(),
         };
-        println!("{}", BytecodeDecompiler::disassemble(&bytecode));
         bytecode
     }
 
-    fn emit(&mut self, instruction: Instruction, operands: &Operands) -> usize {
-        let packer = InstructionPacker(ByteEndianness::Big);
-        let encoded = packer.encode_instruction(instruction.clone(), operands);
-
-        let pos = self.add_instructions(&encoded);
+    fn emit(&mut self, instruction: Instruction) -> usize {
+        let pos = self.add_instructions(instruction.clone());
 
         let previous_instruction = self.scopes[self.scope_idx].last_instruction.clone();
         let last_instruction = Some(EmitedInstruction(instruction, pos));
@@ -75,11 +69,9 @@ impl<'a> Compiler<'a> {
         pos
     }
 
-    fn add_instructions(&mut self, instructions: &CompiledInstructions) -> usize {
+    fn add_instructions(&mut self, instruction: Instruction) -> usize {
         let new_pos = self.scopes[self.scope_idx].instructions.len();
-        self.scopes[self.scope_idx]
-            .instructions
-            .append(&mut instructions.clone());
+        self.scopes[self.scope_idx].instructions.push(instruction);
         new_pos
     }
 
@@ -87,23 +79,8 @@ impl<'a> Compiler<'a> {
         self.constants.set_object(obj)
     }
 
-    fn replace_instructions(&mut self, pos: usize, new_instructions: CompiledInstructions) {
-        for (idx, byte) in new_instructions.iter().enumerate() {
-            self.scopes[self.scope_idx].instructions[pos + idx] = *byte;
-        }
-    }
-
-    fn replace_operands(&mut self, inst_pos: usize, operands: &Operands) {
-        let packer = InstructionPacker(ByteEndianness::Big);
-        match self.scopes[self.scope_idx].instructions.get(inst_pos) {
-            Some(byte) => {
-                let instruction = Instruction::from_u8(*byte);
-                let encoded = packer.encode_instruction(instruction, operands);
-
-                self.replace_instructions(inst_pos, encoded);
-            }
-            _ => {}
-        }
+    fn replace_instruction(&mut self, pos: usize, new_instruction: Instruction) {
+        self.scopes[self.scope_idx].instructions[pos] = new_instruction;
     }
 
     fn enter_scope(&mut self) {
@@ -117,7 +94,7 @@ impl<'a> Compiler<'a> {
         *self.symbols_table = SymbolTable::new_enclosed(self.symbols_table.clone());
     }
 
-    fn leave_scope(&mut self) -> CompiledInstructions {
+    fn leave_scope(&mut self) -> Vec<Instruction> {
         let instructions = self.scopes[self.scope_idx].instructions.clone();
         self.scopes = self.scopes[..self.scopes.len() - 1].to_vec();
         self.scope_idx -= 1;
@@ -155,13 +132,24 @@ impl<'a> Compiler<'a> {
                     return err;
                 }
                 let symbol = self.symbols_table.define(ident);
-                self.emit(
-                    match symbol.scope {
-                        SymbolScope::Global => Instruction::SetGlobal,
-                        SymbolScope::Local => Instruction::SetLocal,
-                    },
-                    &vec![symbol.index],
-                );
+                let idx: u16 = symbol.index.try_into().unwrap();
+                self.emit(match symbol.scope {
+                    SymbolScope::Global => Instruction::SetGlobal(idx),
+                    SymbolScope::Local => Instruction::SetLocal(idx),
+                });
+                None
+            }
+            Statement::FunctionLet(Ident(ident), expr) => {
+                let err = self.compile_expression(expr);
+                if err.is_some() {
+                    return err;
+                }
+                let symbol = self.symbols_table.define(ident);
+                let idx: u16 = symbol.index.try_into().unwrap();
+                self.emit(match symbol.scope {
+                    SymbolScope::Global => Instruction::SetGlobal(idx),
+                    SymbolScope::Local => Instruction::SetLocal(idx),
+                });
                 None
             }
             Statement::Assign(Ident(ident), expr) => {
@@ -172,31 +160,29 @@ impl<'a> Compiler<'a> {
                         format!("variable {} is not defined", ident),
                     ));
                 }
+                let symbol = self.symbols_table.define(ident);
+                let idx: u16 = symbol.index.try_into().unwrap();
                 let err = self.compile_expression(expr);
                 if err.is_some() {
                     return err;
                 }
-                let symbol = self.symbols_table.define(ident);
-                self.emit(
-                    match symbol.scope {
-                        SymbolScope::Global => Instruction::SetGlobal,
-                        SymbolScope::Local => Instruction::SetLocal,
-                    },
-                    &vec![symbol.index],
-                );
+                self.emit(match symbol.scope {
+                    SymbolScope::Global => Instruction::SetGlobal(idx),
+                    SymbolScope::Local => Instruction::SetLocal(idx),
+                });
                 None
             }
             Statement::Return(expr) => {
                 let err = self.compile_expression(expr);
                 if err.is_none() {
-                    self.emit(Instruction::ReturnValue, &vec![]);
+                    self.emit(Instruction::ReturnValue);
                 }
                 err
             }
             Statement::Expression(expr) => {
                 let err = self.compile_expression(expr);
                 if err.is_none() {
-                    self.emit(Instruction::Pop, &vec![]);
+                    self.emit(Instruction::Pop);
                 }
                 err
             }
@@ -220,8 +206,13 @@ impl<'a> Compiler<'a> {
 
     pub fn compile_expression(&mut self, expr: &Expression) -> Option<CompilationError> {
         match expr {
-            Expression::Function { params: _, body } => {
+            Expression::Function { params, body } => {
                 self.enter_scope();
+
+                for param in params {
+                    self.symbols_table.define(&param.0);
+                }
+
                 if let Some(err) = self.compile_block(body) {
                     return Some(err);
                 }
@@ -229,16 +220,16 @@ impl<'a> Compiler<'a> {
                     self.replace_last_pop_with_return();
                 }
                 if !self.last_instruction_is(&Instruction::ReturnValue) {
-                    self.emit(Instruction::Return, &vec![]);
+                    self.emit(Instruction::Return);
                 }
                 let locals = self.symbols_table.num_defs;
                 let instructions = self.leave_scope();
                 let compiled_fn = Object::CompiledFunction {
-                    instructions,
+                    instructions: Instruction::compile_instructions(instructions),
                     locals,
                 };
-                let operands = vec![self.add_constant(Rc::new(compiled_fn))];
-                self.emit(Instruction::Const, &operands);
+                let idx = self.add_constant(Rc::new(compiled_fn));
+                self.emit(Instruction::Const(idx as u16));
                 None
             }
             Expression::Call { func, args } => {
@@ -251,8 +242,7 @@ impl<'a> Compiler<'a> {
                         return err;
                     }
                 }
-                let operands = vec![args.len()];
-                self.emit(Instruction::Call, &operands);
+                self.emit(Instruction::Call(args.len() as u16));
                 None
             }
             Expression::Prefix(_, _) => self.compile_prefix(expr),
@@ -266,13 +256,11 @@ impl<'a> Compiler<'a> {
                         format!("variable {} is not defined", ident),
                     ));
                 }
-                self.emit(
-                    match symbol.clone().unwrap().scope {
-                        SymbolScope::Global => Instruction::GetGlobal,
-                        SymbolScope::Local => Instruction::GetLocal,
-                    },
-                    &vec![symbol.unwrap().index],
-                );
+                let idx = symbol.clone().unwrap().index as u16;
+                self.emit(match symbol.unwrap().scope {
+                    SymbolScope::Global => Instruction::GetGlobal(idx),
+                    SymbolScope::Local => Instruction::GetLocal(idx),
+                });
                 None
             }
             Expression::Index(left, index) => {
@@ -284,7 +272,7 @@ impl<'a> Compiler<'a> {
                 if err.is_some() {
                     return err;
                 }
-                self.emit(Instruction::Index, &vec![]);
+                self.emit(Instruction::Index);
                 None
             }
             Expression::If { .. } => self.compile_if_expr(expr),
@@ -310,12 +298,9 @@ impl<'a> Compiler<'a> {
     }
 
     pub fn replace_last_pop_with_return(&mut self) {
-        let packer = InstructionPacker(ByteEndianness::Big);
         match self.scopes[self.scope_idx].last_instruction {
             Some(EmitedInstruction(Instruction::Pop, pos)) => {
-                let encoded = packer.encode_instruction(Instruction::ReturnValue, &vec![]);
-
-                self.replace_instructions(pos, encoded);
+                self.replace_instruction(pos, Instruction::ReturnValue);
 
                 if let Some(EmitedInstruction(_, pos)) =
                     self.scopes[self.scope_idx].last_instruction
@@ -336,7 +321,7 @@ impl<'a> Compiler<'a> {
             _ => {}
         }
 
-        let jump_not_pos = self.emit(Instruction::JumpNot, &vec![9999 as usize]);
+        let jump_not_pos = self.emit(Instruction::JumpNot(9999));
 
         match self.compile_block(&consequence) {
             Some(err) => return Some(err),
@@ -345,10 +330,10 @@ impl<'a> Compiler<'a> {
 
         self.remove_last_pop();
 
-        let jump_pos = self.emit(Instruction::Jump, &vec![9999 as usize]);
+        let jump_pos = self.emit(Instruction::Jump(9999));
 
         let after_cons_pos = self.scopes[self.scope_idx].instructions.len();
-        self.replace_operands(jump_not_pos, &vec![after_cons_pos]);
+        self.replace_instruction(jump_not_pos, Instruction::JumpNot(after_cons_pos as u16));
 
         match alternative {
             Some(alternative) => {
@@ -359,12 +344,12 @@ impl<'a> Compiler<'a> {
                 self.remove_last_pop();
             }
             None => {
-                self.emit(Instruction::Nil, &vec![]);
+                self.emit(Instruction::Nil);
             }
         };
 
         let after_alt_pos = self.scopes[self.scope_idx].instructions.len();
-        self.replace_operands(jump_pos, &vec![after_alt_pos]);
+        self.replace_instruction(jump_pos, Instruction::Jump(after_alt_pos as u16));
 
         None
     }
@@ -392,13 +377,10 @@ impl<'a> Compiler<'a> {
                 self.compile_expression(right);
                 match prefix {
                     Prefix::Minus => {
-                        self.emit(Instruction::Negative, &vec![]);
+                        self.emit(Instruction::Negative);
                     }
                     Prefix::Not => {
-                        self.emit(Instruction::Not, &vec![]);
-                    }
-                    Prefix::Dollar => {
-                        self.emit(Instruction::ShellCommand, &vec![]);
+                        self.emit(Instruction::Not);
                     }
                     _ => {}
                 }
@@ -411,46 +393,46 @@ impl<'a> Compiler<'a> {
     pub fn compile_infix(&mut self, infix: &Infix) -> Option<CompilationError> {
         match infix {
             Infix::Plus => {
-                self.emit(Instruction::Add, &vec![]);
+                self.emit(Instruction::Add);
             }
             Infix::Minus => {
-                self.emit(Instruction::Sub, &vec![]);
+                self.emit(Instruction::Sub);
             }
             Infix::Multiply => {
-                self.emit(Instruction::Mul, &vec![]);
+                self.emit(Instruction::Mul);
             }
             Infix::Divide => {
-                self.emit(Instruction::Div, &vec![]);
+                self.emit(Instruction::Div);
             }
             Infix::Mod => {
-                self.emit(Instruction::Mod, &vec![]);
+                self.emit(Instruction::Mod);
             }
             Infix::Pow => {
-                self.emit(Instruction::Pow, &vec![]);
+                self.emit(Instruction::Pow);
             }
             Infix::LessThan => {
-                self.emit(Instruction::Lt, &vec![]);
+                self.emit(Instruction::Lt);
             }
             Infix::GreaterThan => {
-                self.emit(Instruction::Gt, &vec![]);
+                self.emit(Instruction::Gt);
             }
             Infix::LessThanEqual => {
-                self.emit(Instruction::Lte, &vec![]);
+                self.emit(Instruction::Lte);
             }
             Infix::GreaterThanEqual => {
-                self.emit(Instruction::Gte, &vec![]);
+                self.emit(Instruction::Gte);
             }
             Infix::Equal => {
-                self.emit(Instruction::Eq, &vec![]);
+                self.emit(Instruction::Eq);
             }
             Infix::NotEqual => {
-                self.emit(Instruction::Neq, &vec![]);
+                self.emit(Instruction::Neq);
             }
             Infix::And => {
-                self.emit(Instruction::And, &vec![]);
+                self.emit(Instruction::And);
             }
             Infix::Or => {
-                self.emit(Instruction::Or, &vec![]);
+                self.emit(Instruction::Or);
             }
         }
         None
@@ -460,14 +442,14 @@ impl<'a> Compiler<'a> {
         match literal {
             Literal::Number(val) => {
                 let number = Object::Number(Float(*val));
-                let operands = vec![self.add_constant(Rc::new(number))];
-                self.emit(Instruction::Const, &operands);
+                let idx = self.add_constant(Rc::new(number)) as u16;
+                self.emit(Instruction::Const(idx));
                 None
             }
             Literal::String(val) => {
                 let string = Object::String(val.to_string());
-                let operands = vec![self.add_constant(Rc::new(string))];
-                self.emit(Instruction::Const, &operands);
+                let idx = self.add_constant(Rc::new(string)) as u16;
+                self.emit(Instruction::Const(idx));
                 None
             }
             Literal::Array(exprs) => {
@@ -476,7 +458,7 @@ impl<'a> Compiler<'a> {
                         return Some(err);
                     }
                 }
-                self.emit(Instruction::Array, &vec![exprs.len()]);
+                self.emit(Instruction::Array(exprs.len() as u16));
                 None
             }
             Literal::Hash(objs) => {
@@ -488,22 +470,15 @@ impl<'a> Compiler<'a> {
                         return Some(err);
                     }
                 }
-                self.emit(Instruction::Hash, &vec![objs.len() * 2]);
+                self.emit(Instruction::Hash((objs.len() * 2) as u16));
                 None
             }
             Literal::Bool(val) => {
-                self.emit(
-                    if *val {
-                        Instruction::True
-                    } else {
-                        Instruction::False
-                    },
-                    &vec![],
-                );
+                self.emit(Instruction::Bool(*val));
                 None
             }
             Literal::Nil => {
-                self.emit(Instruction::Nil, &vec![]);
+                self.emit(Instruction::Nil);
                 None
             }
             #[allow(unreachable_patterns)]
@@ -516,21 +491,15 @@ pub struct BytecodeDecompiler;
 
 impl BytecodeDecompiler {
     pub fn disassemble_function(instructions: &CompiledInstructions) -> String {
-        let length = instructions.len();
-
         let mut decoded_string = String::new();
         let mut idx = 0;
 
-        while idx < length {
-            let op = instructions[idx];
-            let op_kind: Instruction = Instruction::from_u8(op);
-            let (operands, next_offset) = InstructionPacker(ByteEndianness::Big)
-                .decode_instruction(&op_kind, &instructions[idx + 1..]);
+        let decoded = Instruction::decompile_instructions(instructions).unwrap();
+        for op in decoded {
             decoded_string.push_str(&format!("{:0>8x} ", idx));
-            decoded_string.push_str(&op_kind.disasm_instruction(&operands));
+            decoded_string.push_str(&op.as_string());
             decoded_string.push('\n');
-
-            idx = idx + next_offset + 1;
+            idx = idx + 1;
         }
 
         return decoded_string;
