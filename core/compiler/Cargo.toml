@@ -1,6 +1,6 @@
 [package]
 name = "pk_compiler"
-version = "0.0.4-dev"
+version = "0.0.5-dev"
 edition = "2021"
 repository = "https://github.com/juanvillacortac/palacinke-lang"
 description = "The Palacinke lang bytecode compiler"
@@ -11,4 +11,4 @@ authors = ["juanvillacortac@gmail.com"]
 
 [dependencies]
 bytecoding = "0.1.0"
-pk_parser = { version = "0.0.4-dev", path = "../parser" }
+pk_parser = { version = "0.0.5-dev", path = "../parser" }
