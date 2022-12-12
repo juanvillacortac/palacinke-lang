@@ -2,7 +2,7 @@ use std::{cell::RefCell, collections::HashMap, ops::Range, rc::Rc};
 
 use pk_compiler::{
     code::Instruction,
-    objects::{Closure, CompiledFunction, Float, Object},
+    objects::{Closure, Float, Object},
     symbols_table::ConstantsPool,
 };
 
