@@ -4,7 +4,8 @@ pub type Module = BlockStatement;
 #[derive(PartialEq, Clone, Debug)]
 pub enum Statement {
     Expression(Expression),
-    Import(Option<Ident>, Expression),
+    Use(Option<Ident>, Expression),
+    Pub(Box<Statement>),
     Let(Ident, Expression),
     Assign(Ident, Expression),
     FunctionLet(Ident, Expression),
@@ -37,6 +38,7 @@ pub enum Expression {
         alternative: Option<BlockStatement>,
     },
     Function {
+        name: Option<String>,
         params: Vec<Ident>,
         body: BlockStatement,
     },

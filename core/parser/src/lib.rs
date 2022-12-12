@@ -51,7 +51,8 @@ impl Parser {
             match (current, next) {
                 (RawToken::Let, _) => self.parse_let_stmt(),
                 (RawToken::Function, _) => self.parse_func_stmt(),
-                (RawToken::Import, _) => self.parse_import_stmt(),
+                (RawToken::Use, _) => self.parse_use_stmt(),
+                (RawToken::Pub, _) => self.parse_pub_stmt(),
                 (RawToken::Return, _) => self.parse_return_stmt(),
                 (RawToken::Stop, _) => self.parse_stop_stmt(),
                 (RawToken::Next, _) => self.parse_next_stmt(),
@@ -59,6 +60,23 @@ impl Parser {
                 (RawToken::Ident(_), Some((RawToken::Assign, _))) => self.parse_assign_stmt(),
                 _ => self.parse_expr_statement(),
             }
+        } else {
+            None
+        }
+    }
+
+    fn parse_pub_stmt(&mut self) -> Option<Statement> {
+        self.step();
+        if let (Some((current, _)), next) = (self.current_token(), self.next_token()) {
+            let stmt = match (current, next) {
+                (RawToken::Let, _) => self.parse_let_stmt(),
+                (RawToken::Function, _) => self.parse_func_stmt(),
+                _ => None,
+            };
+            if stmt.is_some() {
+                return Some(Statement::Pub(Box::new(stmt.unwrap())));
+            }
+            None
         } else {
             None
         }
@@ -121,6 +139,10 @@ impl Parser {
                     | RawToken::GreaterThanEqual => {
                         self.step();
                         left = self.parse_infix_expr(left.unwrap());
+                    }
+                    RawToken::Dot => {
+                        self.step();
+                        left = self.parse_dot_index_expr(left.unwrap());
                     }
                     RawToken::BracketL => {
                         self.step();
@@ -186,6 +208,7 @@ impl Parser {
         }
 
         Some(Expression::Function {
+            name: None,
             params,
             body: self.parse_block_stmt(),
         })
@@ -251,6 +274,20 @@ impl Parser {
         })
     }
 
+    fn parse_dot_index_expr(&mut self, left: Expression) -> Option<Expression> {
+        self.step();
+
+        let index = match self.parse_ident() {
+            Some(expr) => expr,
+            None => return None,
+        };
+
+        Some(Expression::Index(
+            Box::new(left),
+            Box::new(Expression::Literal(Literal::String(index.0))),
+        ))
+    }
+
     fn parse_index_expr(&mut self, left: Expression) -> Option<Expression> {
         self.step();
 
@@ -278,7 +315,7 @@ impl Parser {
         }
     }
 
-    fn parse_import_stmt(&mut self) -> Option<Statement> {
+    fn parse_use_stmt(&mut self) -> Option<Statement> {
         let Some((next, _)) = self.next_token() else { return None };
         match next {
             RawToken::Ident(_) | RawToken::String(_) => self.step(),
@@ -312,7 +349,7 @@ impl Parser {
             None => return None,
         };
 
-        Some(Statement::Import(ident, expr))
+        Some(Statement::Use(ident, expr))
     }
 
     fn parse_let_stmt(&mut self) -> Option<Statement> {
@@ -332,10 +369,18 @@ impl Parser {
 
         self.step();
 
-        let expr = match self.parse_expression(Precedence::Lowest) {
+        let mut expr = match self.parse_expression(Precedence::Lowest) {
             Some(expr) => expr,
             None => return None,
         };
+
+        if let Expression::Function { body, params, .. } = expr {
+            expr = Expression::Function {
+                name: Some(ident.0.clone()),
+                params,
+                body,
+            }
+        }
 
         if self.next_token_is(&RawToken::Semicolon) {
             self.step();
@@ -379,10 +424,18 @@ impl Parser {
             _ => return None,
         };
 
-        let expr = match self.parse_func_expr() {
+        let mut expr = match self.parse_func_expr() {
             Some(expr) => expr,
             None => return None,
         };
+
+        if let Expression::Function { body, params, .. } = expr {
+            expr = Expression::Function {
+                name: Some(ident.0.clone()),
+                params,
+                body,
+            }
+        }
 
         Some(Statement::FunctionLet(ident, expr))
     }
@@ -687,6 +740,7 @@ fn token_to_precedence(token: &RawToken) -> Precedence {
         RawToken::Plus | RawToken::Minus => Precedence::Sum,
         RawToken::Slash | RawToken::Asterisk | RawToken::Mod | RawToken::Pow => Precedence::Product,
         RawToken::BracketL => Precedence::Index,
+        RawToken::Dot => Precedence::Index,
         RawToken::ParenL => Precedence::Call,
         RawToken::And | RawToken::Or => Precedence::BoolUnions,
         _ => Precedence::Lowest,

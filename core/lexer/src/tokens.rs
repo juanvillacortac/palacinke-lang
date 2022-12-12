@@ -26,8 +26,10 @@ pub enum RawToken {
     Function,
     #[token("let")]
     Let,
-    #[token("import")]
-    Import,
+    #[token("use")]
+    Use,
+    #[token("pub")]
+    Pub,
     #[token("true")]
     True,
     #[token("do")]
@@ -85,6 +87,8 @@ pub enum RawToken {
     Or,
 
     // Delimiters
+    #[token(".")]
+    Dot,
     #[token(",")]
     Comma,
     #[token(";")]

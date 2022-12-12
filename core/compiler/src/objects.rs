@@ -9,17 +9,27 @@ use crate::CompiledInstructions;
 pub type BuiltinFunc = fn(Vec<Object>) -> Object;
 
 #[derive(PartialEq, Clone, Debug)]
+pub struct Closure {
+    pub function: CompiledFunction,
+    pub free: Vec<Object>,
+}
+
+#[derive(PartialEq, Clone, Debug)]
+pub struct CompiledFunction {
+    pub instructions: CompiledInstructions,
+    pub locals: usize,
+}
+
+#[derive(PartialEq, Clone, Debug)]
 pub enum Object {
     Number(Float),
     String(String),
     Boolean(bool),
     Array(Vec<Object>),
     Hash(HashMap<Object, Object>),
-    CompiledFunction {
-        instructions: CompiledInstructions,
-        locals: usize,
-    },
-    Builtin(i32, BuiltinFunc),
+    CompiledFunction(CompiledFunction),
+    Closure(Closure),
+    Builtin(BuiltinFunc),
     ReturnValue(Box<Object>),
     Error(String),
     Nil,
@@ -60,6 +70,9 @@ impl fmt::Display for Object {
             Object::CompiledFunction { .. } => {
                 write!(f, "[Function]")
             }
+            Object::Closure { .. } => {
+                write!(f, "[Closure]")
+            }
             Object::Builtin(..) => {
                 write!(f, "[Builtin]")
             }
@@ -85,6 +98,7 @@ impl Object {
             Object::Array(_) => "array".to_string(),
             Object::Hash(_) => "hash".to_string(),
             Object::Builtin(..) | Object::CompiledFunction { .. } => "fn".to_string(),
+            Object::Closure { .. } => "closure".to_string(),
             Object::ReturnValue(_) => "return".to_string(),
             Object::Error(_) => "error".to_string(),
             Object::Nil => "nil".to_string(),

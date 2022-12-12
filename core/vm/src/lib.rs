@@ -32,7 +32,16 @@ impl<'a> VM<'a> {
         let mut call_stack = CallStack::new();
         let data_stack = DataStack::new();
 
-        let main_frame = Frame::new(bytecode.instructions.clone(), 0);
+        let main_frame = Frame::new(
+            Closure {
+                function: CompiledFunction {
+                    instructions: bytecode.instructions.clone(),
+                    locals: 0,
+                },
+                free: vec![],
+            },
+            0,
+        );
         let _ = call_stack.push_frame(RefCell::new(main_frame));
 
         return VM {

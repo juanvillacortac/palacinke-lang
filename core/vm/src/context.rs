@@ -2,7 +2,7 @@ use std::{cell::RefCell, collections::HashMap, ops::Range, rc::Rc};
 
 use pk_compiler::{
     code::Instruction,
-    objects::{Float, Object},
+    objects::{Closure, CompiledFunction, Float, Object},
     symbols_table::ConstantsPool,
 };
 
@@ -28,6 +28,7 @@ impl<'a> VMContext<'a> {
             Instruction::GetGlobal(op) => self.exec_get_global(*op),
             Instruction::SetLocal(op) => self.exec_set_local(*op),
             Instruction::GetLocal(op) => self.exec_get_local(*op),
+            Instruction::GetFree(op) => self.exec_get_free(*op),
             Instruction::Add
             | Instruction::Sub
             | Instruction::Mul
@@ -51,6 +52,7 @@ impl<'a> VMContext<'a> {
             Instruction::Hash(op) => self.exec_hash(*op),
             Instruction::Index => self.exec_index(),
             Instruction::Call(op) => self.exec_call(*op),
+            Instruction::Closure(op1, op2) => self.push_closure(*op1, *op2),
             Instruction::Return | Instruction::ReturnValue => self.exec_returns(ins),
             #[allow(unreachable_patterns)]
             _ => {
@@ -82,6 +84,11 @@ impl<'a> VMContext<'a> {
             }
         }
         None
+    }
+    fn exec_get_free(&mut self, operand: u16) -> Option<VMError> {
+        let current_closure = self.call_stack.top_ref().closure.clone();
+        self.data_stack
+            .push_object(Rc::new(current_closure.free[operand as usize].clone()))
     }
     fn exec_set_local(&mut self, operand: u16) -> Option<VMError> {
         let frame = self.call_stack.top_ref().clone();
@@ -328,16 +335,14 @@ impl<'a> VMContext<'a> {
     fn exec_call(&mut self, operand: u16) -> Option<VMError> {
         let obj = &*self.data_stack.top_offset(operand as usize);
         match obj {
-            Object::CompiledFunction {
-                instructions,
-                locals,
-            } => {
+            Object::Closure(closure) => {
                 let base_pointer = self.data_stack.stack_pointer;
-                let frame = Frame::new(instructions.clone(), base_pointer - operand as i64);
+                let frame = Frame::new(closure.clone(), base_pointer - operand as i64);
                 match self.call_stack.push_frame(RefCell::new(frame)) {
                     Err(err) => Some(err),
                     _ => {
-                        self.data_stack.stack_pointer = base_pointer + *locals as i64;
+                        self.data_stack.stack_pointer =
+                            base_pointer + closure.function.locals as i64;
                         None
                     }
                 }
@@ -401,5 +406,45 @@ impl<'a> VMContext<'a> {
             idx += 2
         }
         Rc::new(Object::Hash(pairs))
+    }
+
+    pub fn push_closure(&mut self, idx: u16, num_free: u16) -> Option<VMError> {
+        let constant = self
+            .constants
+            .get_object(idx as usize)
+            .unwrap_or(Rc::new(Object::Nil));
+        match &*constant {
+            Object::CompiledFunction(function) => {
+                let mut free = vec![];
+                for idx in 0..num_free {
+                    let obj = self
+                        .data_stack
+                        .stack
+                        .get(
+                            (self.data_stack.stack.len() - 1) as usize - num_free as usize
+                                + idx as usize,
+                        )
+                        .cloned()
+                        .unwrap_or(Rc::new(Object::Nil));
+
+                    free.push((*obj).clone());
+                }
+                self.data_stack.stack_pointer -= num_free as i64;
+                let closure = Rc::new(Object::Closure(Closure {
+                    function: function.clone(),
+                    free,
+                }));
+                self.data_stack.push_object(closure)
+            }
+            _ => Some(VMError::new(
+                VMErrorKind::RuntimeError,
+                "calling non-function object".to_string(),
+            )),
+        }
+    }
+    pub fn exec_current_closure(&mut self) -> Option<VMError> {
+        let closure = self.call_stack.top().closure.clone();
+        self.data_stack
+            .push_object(Rc::new(Object::Closure(closure)))
     }
 }

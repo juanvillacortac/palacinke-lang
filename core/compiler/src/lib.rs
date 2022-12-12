@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use code::*;
 use errors::*;
-use objects::{Float, Object};
+use objects::{CompiledFunction, Float, Object};
 use pk_parser::ast::*;
 use symbols_table::{ConstantsPool, SymbolScope, SymbolTable};
 
@@ -100,7 +100,7 @@ impl<'a> Compiler<'a> {
         self.scope_idx -= 1;
         match &self.symbols_table.outer {
             Some(ref outer) => {
-                *self.symbols_table = *outer.clone();
+                *self.symbols_table = outer.clone().as_ref().borrow().clone();
             }
             _ => {}
         }
@@ -116,7 +116,7 @@ impl<'a> Compiler<'a> {
 
     pub fn compile_block(&mut self, block: &BlockStatement) -> Option<CompilationError> {
         for statement in block {
-            let error = self.compile_statement(&statement);
+            let error = self.compile_statement(&statement, false);
             if error.is_some() {
                 return error;
             }
@@ -124,18 +124,27 @@ impl<'a> Compiler<'a> {
         None
     }
 
-    pub fn compile_statement(&mut self, statement: &Statement) -> Option<CompilationError> {
+    pub fn compile_statement(
+        &mut self,
+        statement: &Statement,
+        public: bool,
+    ) -> Option<CompilationError> {
         match statement {
+            Statement::Pub(stmt) => self.compile_statement(stmt, true),
             Statement::Let(Ident(ident), expr) => {
+                let symbol = if public {
+                    self.symbols_table.define_public(ident)
+                } else {
+                    self.symbols_table.define(ident)
+                };
                 let err = self.compile_expression(expr);
                 if err.is_some() {
                     return err;
                 }
-                let symbol = self.symbols_table.define(ident);
                 let idx: u16 = symbol.index.try_into().unwrap();
                 self.emit(match symbol.scope {
-                    SymbolScope::Global => Instruction::SetGlobal(idx),
-                    SymbolScope::Local => Instruction::SetLocal(idx),
+                    SymbolScope::Global | SymbolScope::Public => Instruction::SetGlobal(idx),
+                    _ => Instruction::SetLocal(idx),
                 });
                 None
             }
@@ -144,11 +153,15 @@ impl<'a> Compiler<'a> {
                 if err.is_some() {
                     return err;
                 }
-                let symbol = self.symbols_table.define(ident);
+                let symbol = if public {
+                    self.symbols_table.define_public(ident)
+                } else {
+                    self.symbols_table.define(ident)
+                };
                 let idx: u16 = symbol.index.try_into().unwrap();
                 self.emit(match symbol.scope {
-                    SymbolScope::Global => Instruction::SetGlobal(idx),
-                    SymbolScope::Local => Instruction::SetLocal(idx),
+                    SymbolScope::Global | SymbolScope::Public => Instruction::SetGlobal(idx),
+                    _ => Instruction::SetLocal(idx),
                 });
                 None
             }
@@ -168,7 +181,7 @@ impl<'a> Compiler<'a> {
                 }
                 self.emit(match symbol.scope {
                     SymbolScope::Global => Instruction::SetGlobal(idx),
-                    SymbolScope::Local => Instruction::SetLocal(idx),
+                    _ => Instruction::SetLocal(idx),
                 });
                 None
             }
@@ -206,8 +219,12 @@ impl<'a> Compiler<'a> {
 
     pub fn compile_expression(&mut self, expr: &Expression) -> Option<CompilationError> {
         match expr {
-            Expression::Function { params, body } => {
+            Expression::Function { params, body, name } => {
                 self.enter_scope();
+
+                if name.is_some() {
+                    self.symbols_table.define_function(&name.clone().unwrap());
+                }
 
                 for param in params {
                     self.symbols_table.define(&param.0);
@@ -222,14 +239,24 @@ impl<'a> Compiler<'a> {
                 if !self.last_instruction_is(&Instruction::ReturnValue) {
                     self.emit(Instruction::Return);
                 }
+                let free_symbols = self.symbols_table.free.clone();
                 let locals = self.symbols_table.num_defs;
                 let instructions = self.leave_scope();
-                let compiled_fn = Object::CompiledFunction {
+
+                for symbol in &free_symbols {
+                    self.emit(match symbol.scope {
+                        SymbolScope::Free => Instruction::GetFree(symbol.index as u16),
+                        SymbolScope::Global => Instruction::GetGlobal(symbol.index as u16),
+                        _ => Instruction::GetLocal(symbol.index as u16),
+                    });
+                }
+
+                let compiled_fn = Object::CompiledFunction(CompiledFunction {
                     instructions: Instruction::compile_instructions(instructions),
                     locals,
-                };
+                });
                 let idx = self.add_constant(Rc::new(compiled_fn));
-                self.emit(Instruction::Const(idx as u16));
+                self.emit(Instruction::Closure(idx as u16, free_symbols.len() as u16));
                 None
             }
             Expression::Call { func, args } => {
@@ -258,8 +285,10 @@ impl<'a> Compiler<'a> {
                 }
                 let idx = symbol.clone().unwrap().index as u16;
                 self.emit(match symbol.unwrap().scope {
-                    SymbolScope::Global => Instruction::GetGlobal(idx),
+                    SymbolScope::Global | SymbolScope::Public => Instruction::GetGlobal(idx),
                     SymbolScope::Local => Instruction::GetLocal(idx),
+                    SymbolScope::Free => Instruction::GetFree(idx),
+                    _ => Instruction::CurrentClosure,
                 });
                 None
             }
@@ -518,9 +547,9 @@ impl BytecodeDecompiler {
         let mut idx = 0;
         for item in &constant_pool.objects {
             match item.as_ref() {
-                Object::CompiledFunction {
+                Object::CompiledFunction(CompiledFunction {
                     instructions: sub, ..
-                } => {
+                }) => {
                     decoded_string.push_str(&format!("{:0>8x} {}\n", idx, item));
                     let repr = BytecodeDecompiler::disassemble_function(sub);
                     decoded_string.push_str("Subroutine Start:\n");

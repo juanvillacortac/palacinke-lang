@@ -8,6 +8,8 @@ pub enum Instruction {
     Illegal,
 
     Call(u16),
+    Closure(u16, u16),
+    CurrentClosure,
 
     Return,
     ReturnValue,
@@ -19,6 +21,7 @@ pub enum Instruction {
     GetGlobal(u16),
     SetLocal(u16),
     GetLocal(u16),
+    GetFree(u16),
 
     Array(u16),
     Hash(u16),
@@ -58,6 +61,8 @@ impl Instruction {
             Self::Const(op) => format!("OpConst {op}"),
             Self::Pop => "OpPop".to_string(),
             Self::Call(op) => format!("OpCall {op}"),
+            Self::Closure(op1, op2) => format!("OpClosure {op1} {op2}"),
+            Self::CurrentClosure => "OpCurrentClosure".to_string(),
             Self::Return => "OpReturn".to_string(),
             Self::ReturnValue => "OpReturnValue".to_string(),
             Self::Add => "OpAdd".to_string(),
@@ -84,6 +89,7 @@ impl Instruction {
             Self::GetGlobal(op) => format!("OpGetGlobal {op}"),
             Self::SetLocal(op) => format!("OpSetLocal {op}"),
             Self::GetLocal(op) => format!("OpGetLocal {op}"),
+            Self::GetFree(op) => format!("OpGetFree {op}"),
             Self::Array(op) => format!("OpArr {op}"),
             Self::Hash(op) => format!("OpHash {op}"),
             Self::Index => "OpIndex".to_string(),
