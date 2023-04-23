@@ -133,7 +133,7 @@ impl SymbolTable {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ConstantsPool {
     pub objects: Vec<Rc<Object>>,
     pub size: usize,

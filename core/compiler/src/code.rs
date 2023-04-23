@@ -17,15 +17,21 @@ pub enum Instruction {
     Const(u16),
     Pop,
 
+    BindPublic(u16, u16),
+    CallModule(u16),
     SetGlobal(u16),
     GetGlobal(u16),
     SetLocal(u16),
     GetLocal(u16),
     GetFree(u16),
 
+    AssignGlobal(u16),
+    AssignLocal(u16),
+
     Array(u16),
     Hash(u16),
-    Index,
+    GetItem,
+    SetItem,
 
     Jump(u16),
     JumpNot(u16),
@@ -85,14 +91,19 @@ impl Instruction {
             Self::Jump(op) => format!("OpJump {op}"),
             Self::JumpNot(op) => format!("OpJumpNot {op}"),
             Self::Nil => "OpNil".to_string(),
+            Self::BindPublic(op1, op2) => format!("OpBindPublic {op1} {op2}"),
+            Self::CallModule(op) => format!("OpCallModule {op}"),
             Self::SetGlobal(op) => format!("OpSetGlobal {op}"),
             Self::GetGlobal(op) => format!("OpGetGlobal {op}"),
             Self::SetLocal(op) => format!("OpSetLocal {op}"),
             Self::GetLocal(op) => format!("OpGetLocal {op}"),
+            Self::AssignGlobal(op) => format!("OpAssignGlobal {op}"),
+            Self::AssignLocal(op) => format!("OpAssignLocal {op}"),
+            Self::SetItem => format!("OpSetItem"),
             Self::GetFree(op) => format!("OpGetFree {op}"),
             Self::Array(op) => format!("OpArr {op}"),
             Self::Hash(op) => format!("OpHash {op}"),
-            Self::Index => "OpIndex".to_string(),
+            Self::GetItem => "OpGetItem".to_string(),
             Self::Illegal => "ILLEGAL_OP".to_string(),
         }
     }

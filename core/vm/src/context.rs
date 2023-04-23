@@ -2,6 +2,7 @@ use std::{cell::RefCell, collections::HashMap, ops::Range, rc::Rc};
 
 use pk_compiler::{
     code::Instruction,
+    modules_table::ModulesTable,
     objects::{Closure, Float, Object},
     symbols_table::ConstantsPool,
 };
@@ -10,25 +11,31 @@ use crate::{
     errors::{VMError, VMErrorKind},
     frames::Frame,
     stack::{CallStack, DataStack},
-    GlobalsStore,
+    GlobalsStore, ModulesStore, VM,
 };
 
 pub struct VMContext<'a> {
     pub globals: &'a mut GlobalsStore,
+    pub modules: &'a mut ModulesStore,
+    pub modules_table: ModulesTable,
     pub data_stack: &'a mut DataStack,
     pub call_stack: &'a mut CallStack,
     pub constants: &'a mut ConstantsPool,
+    pub exported_objects: &'a mut HashMap<Object, Object>,
 }
 
 impl<'a> VMContext<'a> {
     pub fn exec_instruction(&mut self, ins: &Instruction) -> Option<VMError> {
         match ins {
             Instruction::Const(op) => self.exec_const(*op),
-            Instruction::SetGlobal(op) => self.exec_set_global(*op),
+            Instruction::SetGlobal(op) | Instruction::AssignGlobal(op) => self.exec_set_global(*op),
             Instruction::GetGlobal(op) => self.exec_get_global(*op),
-            Instruction::SetLocal(op) => self.exec_set_local(*op),
+            Instruction::SetLocal(op) | Instruction::AssignLocal(op) => self.exec_set_local(*op),
             Instruction::GetLocal(op) => self.exec_get_local(*op),
             Instruction::GetFree(op) => self.exec_get_free(*op),
+            Instruction::CallModule(op) => self.exec_call_module(*op),
+            Instruction::BindPublic(op1, op2) => self.exec_bind_public(*op1, *op2),
+            Instruction::CurrentClosure => self.exec_current_closure(),
             Instruction::Add
             | Instruction::Sub
             | Instruction::Mul
@@ -50,7 +57,8 @@ impl<'a> VMContext<'a> {
             Instruction::Jump(_) | Instruction::JumpNot(_) => self.exec_jumps(ins),
             Instruction::Array(op) => self.exec_array(*op),
             Instruction::Hash(op) => self.exec_hash(*op),
-            Instruction::Index => self.exec_index(),
+            Instruction::GetItem => self.exec_get_item(),
+            Instruction::SetItem => self.exec_set_item(),
             Instruction::Call(op) => self.exec_call(*op),
             Instruction::Closure(op1, op2) => self.push_closure(*op1, *op2),
             Instruction::Return | Instruction::ReturnValue => self.exec_returns(ins),
@@ -63,13 +71,51 @@ impl<'a> VMContext<'a> {
             }
         }
     }
+    fn exec_call_module(&mut self, operand: u16) -> Option<VMError> {
+        match &self.modules[operand as usize] {
+            None => {
+                let module = self.modules_table.resolve(operand as usize);
+                // let mut globals = new_globals_store();
+                let mut vm = VM::new_state(
+                    &module.unwrap(),
+                    self.modules_table.clone(),
+                    self.globals,
+                    self.modules,
+                );
+                match vm.eval() {
+                    Ok(_) => {
+                        let exported = vm.exported();
+                        self.modules[operand as usize] = Some(exported.clone());
+                        self.data_stack.push_object(Rc::new(exported.clone()))
+                    }
+                    Err(err) => Some(err),
+                }
+            }
+            Some(exported) => {
+                self.data_stack.push_object(Rc::new(exported.clone()));
+                return None;
+            }
+        }
+    }
+
+    fn exec_bind_public(&mut self, idx: u16, const_idx: u16) -> Option<VMError> {
+        match (
+            &self.globals[idx as usize],
+            self.constants.get_object(const_idx as usize),
+        ) {
+            (Some(obj), Some(ident)) => {
+                self.exported_objects.insert((*ident).clone(), obj.clone());
+            }
+            _ => {}
+        }
+        None
+    }
     fn exec_const(&mut self, operand: u16) -> Option<VMError> {
         let obj = self.constants.get_object(operand as usize);
         self.data_stack.push_object(obj.unwrap())
     }
     fn exec_set_global(&mut self, operand: u16) -> Option<VMError> {
-        self.globals[operand as usize] =
-            Some(self.data_stack.pop_object().unwrap().as_ref().clone());
+        self.globals[operand as usize] = Some(self.data_stack.top().as_ref().clone());
         None
     }
     fn exec_get_global(&mut self, operand: u16) -> Option<VMError> {
@@ -300,12 +346,45 @@ impl<'a> VMContext<'a> {
         // self.call_stack.stack_pointer -= operands[0] as i64;
         self.data_stack.push_object(hash)
     }
-    fn exec_index(&mut self) -> Option<VMError> {
+    fn exec_get_item(&mut self) -> Option<VMError> {
         let index = self.data_stack.pop_object().unwrap_or(Rc::new(Object::Nil));
         let left = self.data_stack.pop_object().unwrap_or(Rc::new(Object::Nil));
         match (&*left, &*index) {
             (Object::Array(_), Object::Number(_)) => self.exec_array_index(&left, &index),
             (Object::Hash(_), _) => self.exec_hash_index(&left, &index),
+            _ => Some(VMError::new(
+                VMErrorKind::IllegalOperation,
+                format!(
+                    "\"{}\" index type is not supported by \"{}\" object type",
+                    index.type_str(),
+                    left.type_str()
+                ),
+            )),
+        }
+    }
+    fn exec_set_item(&mut self) -> Option<VMError> {
+        let value = self.data_stack.pop_object().unwrap_or(Rc::new(Object::Nil));
+        let index = self.data_stack.pop_object().unwrap_or(Rc::new(Object::Nil));
+        let left = self.data_stack.pop_object().unwrap_or(Rc::new(Object::Nil));
+        match (&*left, &*index) {
+            (Object::Array(array), Object::Number(Float(index))) => {
+                let max = (array.len() - 1) as i64;
+                let index = *index as i64;
+                if index < 0 || index > max {
+                    return Some(VMError::new(
+                        VMErrorKind::IllegalOperation,
+                        format!("index \"{}\" outs of bounds \"{}\"", index, max),
+                    ));
+                }
+                let mut array = Vec::from(&array[..]);
+                array[index as usize] = (*value).clone();
+                self.data_stack.push_object(Rc::new(Object::Array(array)))
+            }
+            (Object::Hash(hash), index) => {
+                let mut hash = hash.clone();
+                hash.insert((*index).clone(), (*value).clone());
+                self.data_stack.push_object(Rc::new(Object::Hash(hash)))
+            }
             _ => Some(VMError::new(
                 VMErrorKind::IllegalOperation,
                 format!(

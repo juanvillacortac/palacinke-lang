@@ -1,5 +1,7 @@
 pub mod code;
 pub mod errors;
+pub mod loaders;
+pub mod modules_table;
 pub mod objects;
 pub mod symbols_table;
 
@@ -7,12 +9,15 @@ use std::rc::Rc;
 
 use code::*;
 use errors::*;
-use objects::{CompiledFunction, Float, Object};
-use pk_parser::ast::*;
+use modules_table::ModulesTable;
+use objects::{CompiledFunction, Float, Module, ModuleOrigin, Object};
+use pk_parser::ast::{self, *};
 use symbols_table::{ConstantsPool, SymbolScope, SymbolTable};
 
 #[derive(Debug, Clone)]
 pub struct EmitedInstruction(Instruction, usize);
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct CompiledBytecode {
     pub instructions: CompiledInstructions,
     pub constants: ConstantsPool,
@@ -29,21 +34,31 @@ pub struct CompilationScope {
 pub struct Compiler<'a> {
     constants: &'a mut ConstantsPool,
     symbols_table: &'a mut SymbolTable,
+    modules_table: &'a mut ModulesTable,
     scopes: Vec<CompilationScope>,
     scope_idx: usize,
+
+    path: String,
 }
 
 impl<'a> Compiler<'a> {
-    pub fn new(symbols_table: &'a mut SymbolTable, constants: &'a mut ConstantsPool) -> Self {
+    pub fn new(
+        symbols_table: &'a mut SymbolTable,
+        constants: &'a mut ConstantsPool,
+        modules_table: &'a mut ModulesTable,
+        path: &str,
+    ) -> Self {
         Self {
             constants,
             symbols_table,
+            modules_table,
             scopes: vec![CompilationScope {
                 last_instruction: None,
                 previous_instruction: None,
                 instructions: vec![],
             }],
             scope_idx: 0,
+            path: path.to_string(),
         }
     }
 
@@ -107,10 +122,14 @@ impl<'a> Compiler<'a> {
         instructions
     }
 
-    pub fn compile(&mut self, module: Module) -> Result<CompiledBytecode, CompilationError> {
+    pub fn compile(&mut self, module: ast::Module) -> Result<Module, CompilationError> {
         match self.compile_block(&module) {
             Some(err) => return Err(err),
-            _ => Ok(self.get_bytecode()),
+            _ => Ok(Module {
+                bytecode: self.get_bytecode(),
+                path: self.path.to_string(),
+                origin: ModuleOrigin::Local,
+            }),
         }
     }
 
@@ -130,22 +149,52 @@ impl<'a> Compiler<'a> {
         public: bool,
     ) -> Option<CompilationError> {
         match statement {
+            Statement::Use(ident, expr) => {
+                let symbol = match ident {
+                    Some(Ident(name)) => Some(self.symbols_table.define(&name)),
+                    _ => None,
+                };
+                let Expression::Literal(Literal::String(use_path)) = expr else {
+                    return None
+                };
+
+                let entry = match self.modules_table.define(&self.path, &use_path) {
+                    Ok(entry) => entry,
+                    Err(err) => return Some(err),
+                };
+
+                self.emit(Instruction::CallModule(entry.index as u16));
+
+                match symbol {
+                    Some(symbol) => {
+                        self.emit(Instruction::SetGlobal(symbol.index as u16));
+                    }
+                    _ => {}
+                }
+
+                None
+            }
             Statement::Pub(stmt) => self.compile_statement(stmt, true),
             Statement::Let(Ident(ident), expr) => {
-                let symbol = if public {
-                    self.symbols_table.define_public(ident)
-                } else {
-                    self.symbols_table.define(ident)
-                };
+                let symbol = self.symbols_table.define(ident);
+
                 let err = self.compile_expression(expr);
                 if err.is_some() {
                     return err;
                 }
+
                 let idx: u16 = symbol.index.try_into().unwrap();
                 self.emit(match symbol.scope {
                     SymbolScope::Global | SymbolScope::Public => Instruction::SetGlobal(idx),
                     _ => Instruction::SetLocal(idx),
                 });
+
+                if public {
+                    let ident_idx =
+                        self.add_constant(Rc::new(Object::String(ident.to_string()))) as u16;
+                    self.emit(Instruction::BindPublic(idx, ident_idx));
+                }
+
                 None
             }
             Statement::FunctionLet(Ident(ident), expr) => {
@@ -163,28 +212,35 @@ impl<'a> Compiler<'a> {
                     SymbolScope::Global | SymbolScope::Public => Instruction::SetGlobal(idx),
                     _ => Instruction::SetLocal(idx),
                 });
+
+                if public {
+                    let ident_idx =
+                        self.add_constant(Rc::new(Object::String(ident.to_string()))) as u16;
+                    self.emit(Instruction::BindPublic(idx, ident_idx));
+                }
+
                 None
             }
-            Statement::Assign(Ident(ident), expr) => {
-                let symbol = self.symbols_table.resolve(ident);
-                if symbol.is_none() {
-                    return Some(CompilationError::new(
-                        CompilationErrorKind::UnresolvedSymbol,
-                        format!("variable {} is not defined", ident),
-                    ));
-                }
-                let symbol = self.symbols_table.define(ident);
-                let idx: u16 = symbol.index.try_into().unwrap();
-                let err = self.compile_expression(expr);
-                if err.is_some() {
-                    return err;
-                }
-                self.emit(match symbol.scope {
-                    SymbolScope::Global => Instruction::SetGlobal(idx),
-                    _ => Instruction::SetLocal(idx),
-                });
-                None
-            }
+            // Statement::Assign(Ident(ident), expr) => {
+            //     let symbol = self.symbols_table.resolve(ident);
+            //     if symbol.is_none() {
+            //         return Some(CompilationError::new(
+            //             CompilationErrorKind::UnresolvedSymbol,
+            //             format!("variable {} is not defined", ident),
+            //         ));
+            //     }
+            //     let symbol = self.symbols_table.define(ident);
+            //     let idx: u16 = symbol.index.try_into().unwrap();
+            //     let err = self.compile_expression(expr);
+            //     if err.is_some() {
+            //         return err;
+            //     }
+            //     self.emit(match symbol.scope {
+            //         SymbolScope::Global => Instruction::SetGlobal(idx),
+            //         _ => Instruction::SetLocal(idx),
+            //     });
+            //     None
+            // }
             Statement::Return(expr) => {
                 let err = self.compile_expression(expr);
                 if err.is_none() {
@@ -246,8 +302,11 @@ impl<'a> Compiler<'a> {
                 for symbol in &free_symbols {
                     self.emit(match symbol.scope {
                         SymbolScope::Free => Instruction::GetFree(symbol.index as u16),
-                        SymbolScope::Global => Instruction::GetGlobal(symbol.index as u16),
-                        _ => Instruction::GetLocal(symbol.index as u16),
+                        SymbolScope::Global | SymbolScope::Public => {
+                            Instruction::GetGlobal(symbol.index as u16)
+                        }
+                        SymbolScope::Local => Instruction::GetLocal(symbol.index as u16),
+                        SymbolScope::Function => Instruction::CurrentClosure,
                     });
                 }
 
@@ -288,7 +347,7 @@ impl<'a> Compiler<'a> {
                     SymbolScope::Global | SymbolScope::Public => Instruction::GetGlobal(idx),
                     SymbolScope::Local => Instruction::GetLocal(idx),
                     SymbolScope::Free => Instruction::GetFree(idx),
-                    _ => Instruction::CurrentClosure,
+                    SymbolScope::Function => Instruction::CurrentClosure,
                 });
                 None
             }
@@ -301,16 +360,68 @@ impl<'a> Compiler<'a> {
                 if err.is_some() {
                     return err;
                 }
-                self.emit(Instruction::Index);
+                self.emit(Instruction::GetItem);
                 None
             }
             Expression::If { .. } => self.compile_if_expr(expr),
+            Expression::Assign(left, right) => {
+                match &**left {
+                    Expression::Ident(Ident(ident)) => {
+                        let err = self.compile_expression(right);
+                        if err.is_some() {
+                            return err;
+                        }
+                        self.compile_assignment(&ident)
+                    }
+                    Expression::Index(ie_left, index) => {
+                        let err = self.compile_expression(ie_left);
+                        if err.is_some() {
+                            return err;
+                        }
+                        let err = self.compile_expression(index);
+                        if err.is_some() {
+                            return err;
+                        }
+                        let err = self.compile_expression(right);
+                        if err.is_some() {
+                            return err;
+                        }
+                        self.emit(Instruction::SetItem);
+                        match &**ie_left {
+                            Expression::Ident(Ident(ident)) => self.compile_assignment(&ident),
+                            _ => None,
+                        }
+                    }
+                    expr => {
+                        return Some(CompilationError::new(
+                            CompilationErrorKind::GeneralError,
+                            format!("You cannot assign to a \"{:#?}\" expression", expr),
+                        ))
+                    }
+                };
+                None
+            }
             #[allow(unreachable_patterns)]
             stmt => Some(CompilationError::new(
                 CompilationErrorKind::UnresolvedSymbol,
                 format!("Expression \"{:?}\" not implemented yet", stmt),
             )),
         }
+    }
+
+    pub fn compile_assignment(&mut self, ident: &str) -> Option<CompilationError> {
+        let Some(symbol) = self.symbols_table.resolve(&ident) else {
+            return Some(CompilationError::new(
+                CompilationErrorKind::UnresolvedSymbol,
+                format!("variable {} is not defined", ident),
+            ));
+        };
+        let idx = symbol.index as u16;
+        self.emit(match &symbol.scope {
+            SymbolScope::Global | SymbolScope::Public => Instruction::AssignGlobal(idx),
+            _ => Instruction::AssignLocal(idx),
+        });
+        None
     }
 
     pub fn remove_last_pop(&mut self) {

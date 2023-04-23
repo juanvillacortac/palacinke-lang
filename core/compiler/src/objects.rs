@@ -4,7 +4,7 @@ use std::{
     hash::{Hash, Hasher},
 };
 
-use crate::CompiledInstructions;
+use crate::{CompiledBytecode, CompiledInstructions};
 
 pub type BuiltinFunc = fn(Vec<Object>) -> Object;
 
@@ -15,6 +15,19 @@ pub struct Closure {
 }
 
 #[derive(PartialEq, Clone, Debug)]
+pub enum ModuleOrigin {
+    Local,
+    Remote,
+}
+
+#[derive(PartialEq, Clone, Debug)]
+pub struct Module {
+    pub bytecode: CompiledBytecode,
+    pub origin: ModuleOrigin,
+    pub path: String,
+}
+
+#[derive(PartialEq, Clone, Debug)]
 pub struct CompiledFunction {
     pub instructions: CompiledInstructions,
     pub locals: usize,
@@ -22,6 +35,7 @@ pub struct CompiledFunction {
 
 #[derive(PartialEq, Clone, Debug)]
 pub enum Object {
+    Module(Module),
     Number(Float),
     String(String),
     Boolean(bool),
@@ -70,6 +84,9 @@ impl fmt::Display for Object {
             Object::CompiledFunction { .. } => {
                 write!(f, "[Function]")
             }
+            Object::Module { .. } => {
+                write!(f, "[Module]")
+            }
             Object::Closure { .. } => {
                 write!(f, "[Closure]")
             }
@@ -99,6 +116,7 @@ impl Object {
             Object::Hash(_) => "hash".to_string(),
             Object::Builtin(..) | Object::CompiledFunction { .. } => "fn".to_string(),
             Object::Closure { .. } => "closure".to_string(),
+            Object::Module(_) => "module".to_string(),
             Object::ReturnValue(_) => "return".to_string(),
             Object::Error(_) => "error".to_string(),
             Object::Nil => "nil".to_string(),

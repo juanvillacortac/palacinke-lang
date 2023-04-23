@@ -4,6 +4,7 @@ use std::fmt;
 pub enum CompilationErrorKind {
     GeneralError,
     UnresolvedSymbol,
+    ModuleImport(String),
 }
 
 impl fmt::Display for CompilationErrorKind {
@@ -14,6 +15,9 @@ impl fmt::Display for CompilationErrorKind {
             }
             CompilationErrorKind::UnresolvedSymbol => {
                 write!(f, "Unresolved symbol")
+            }
+            CompilationErrorKind::ModuleImport(path) => {
+                write!(f, "Error importing module \"{}\"", path)
             }
         }
     }

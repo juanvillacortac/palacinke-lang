@@ -2,6 +2,7 @@ use std::fs;
 
 use palacinke::utils::*;
 use pk_compiler::{
+    modules_table::ModulesTable,
     symbols_table::{ConstantsPool, SymbolTable},
     Compiler,
 };
@@ -29,10 +30,11 @@ pub fn parse_file(path: &str) -> Option<Module> {
     }
 }
 
-fn eval(module: Module) {
+fn eval(module: Module, path: &str) {
     let mut symbols_table = SymbolTable::new();
     let mut constants = ConstantsPool::new();
-    let mut compiler = Compiler::new(&mut symbols_table, &mut constants);
+    let mut modules_table = ModulesTable::new();
+    let mut compiler = Compiler::new(&mut symbols_table, &mut constants, &mut modules_table, path);
     let bytecode = match compiler.compile(module) {
         Ok(bytecode) => bytecode,
         Err(err) => {
@@ -42,7 +44,8 @@ fn eval(module: Module) {
     };
 
     let mut globals = new_globals_store();
-    let mut vm = VM::new_state(&bytecode, &mut globals);
+    let mut modules = new_globals_store();
+    let mut vm = VM::new_state(&bytecode, modules_table, &mut globals, &mut modules);
     match vm.eval() {
         Ok(_) => {}
         Err(err) => print_vm_error(err),
@@ -51,7 +54,7 @@ fn eval(module: Module) {
 
 pub fn run(path: &str) {
     match parse_file(path) {
-        Some(module) => eval(module),
+        Some(module) => eval(module, path),
         _ => {}
     }
 }

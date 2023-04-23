@@ -5,6 +5,7 @@ use pk_lexer::tokens::Token;
 #[derive(Debug, Clone)]
 pub enum ParseErrorKind {
     UnexpectedToken(Token),
+    General,
 }
 
 impl fmt::Display for ParseErrorKind {
@@ -12,6 +13,9 @@ impl fmt::Display for ParseErrorKind {
         match self {
             ParseErrorKind::UnexpectedToken((_, pos)) => {
                 write!(f, "Unexpected Token at pos {}:{}", pos.start, pos.end)
+            }
+            ParseErrorKind::General => {
+                write!(f, "")
             }
         }
     }

@@ -3,17 +3,18 @@ pub mod errors;
 mod frames;
 mod stack;
 
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use context::VMContext;
 use errors::*;
 use frames::Frame;
-use pk_compiler::{objects::*, symbols_table::ConstantsPool, CompiledBytecode};
+use pk_compiler::{modules_table::ModulesTable, objects::*, symbols_table::ConstantsPool};
 use stack::{CallStack, DataStack};
 
 const GLOBALS_SIZE: usize = 65536;
 
 pub type GlobalsStore = Vec<Option<Object>>;
+pub type ModulesStore = Vec<Option<Object>>;
 pub type Stack = Vec<Option<Object>>;
 
 pub fn new_globals_store() -> GlobalsStore {
@@ -22,20 +23,28 @@ pub fn new_globals_store() -> GlobalsStore {
 
 pub struct VM<'a> {
     constants: ConstantsPool,
+    modules_table: ModulesTable,
     globals: &'a mut GlobalsStore,
+    modules: &'a mut ModulesStore,
     data_stack: DataStack,
     call_stack: CallStack,
+    exported_objects: HashMap<Object, Object>,
 }
 
 impl<'a> VM<'a> {
-    pub fn new_state(bytecode: &CompiledBytecode, globals: &'a mut GlobalsStore) -> Self {
+    pub fn new_state(
+        module: &Module,
+        modules_table: ModulesTable,
+        globals: &'a mut GlobalsStore,
+        modules: &'a mut ModulesStore,
+    ) -> Self {
         let mut call_stack = CallStack::new();
         let data_stack = DataStack::new();
 
         let main_frame = Frame::new(
             Closure {
                 function: CompiledFunction {
-                    instructions: bytecode.instructions.clone(),
+                    instructions: module.bytecode.instructions.clone(),
                     locals: 0,
                 },
                 free: vec![],
@@ -45,33 +54,31 @@ impl<'a> VM<'a> {
         let _ = call_stack.push_frame(RefCell::new(main_frame));
 
         return VM {
-            constants: bytecode.constants.clone(),
+            modules_table,
+            constants: module.bytecode.constants.clone(),
             call_stack,
             data_stack,
             globals,
-        };
-    }
-
-    pub fn new_empty_from_state(globals: &'a mut GlobalsStore, constants: ConstantsPool) -> Self {
-        let call_stack = CallStack::new();
-        let data_stack = DataStack::new();
-
-        return VM {
-            constants,
-            call_stack,
-            data_stack,
-            globals,
+            modules,
+            exported_objects: HashMap::new(),
         };
     }
 
     pub fn eval(&mut self) -> Result<Rc<Object>, VMError> {
         let mut ctx = VMContext {
+            modules_table: self.modules_table.clone(),
             call_stack: &mut self.call_stack,
             constants: &mut self.constants,
             data_stack: &mut self.data_stack,
             globals: &mut self.globals,
+            modules: &mut self.modules,
+            exported_objects: &mut self.exported_objects,
         };
         Self::eval_from_context(&mut ctx)
+    }
+
+    pub fn exported(&self) -> Object {
+        Object::Hash(self.exported_objects.clone())
     }
 
     pub fn push_new_frame(&mut self, frame: RefCell<Frame>) -> Option<VMError> {

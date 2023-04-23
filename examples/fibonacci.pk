@@ -11,4 +11,4 @@ fn fib (x) {
 }
 
 # Must print 55
-fib(10)
+pub let fib_of_10 = fib(10)

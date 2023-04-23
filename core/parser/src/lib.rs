@@ -7,6 +7,7 @@ use ast::*;
 use errors::*;
 
 pub type ParseErrors = Vec<ParseError>;
+pub type ParserResult = Result<Module, ParseErrors>;
 
 pub struct Parser {
     tokens: TokenList,
@@ -57,7 +58,6 @@ impl Parser {
                 (RawToken::Stop, _) => self.parse_stop_stmt(),
                 (RawToken::Next, _) => self.parse_next_stmt(),
                 (RawToken::Do, _) => self.parse_do_stmt(),
-                (RawToken::Ident(_), Some((RawToken::Assign, _))) => self.parse_assign_stmt(),
                 _ => self.parse_expr_statement(),
             }
         } else {
@@ -139,6 +139,10 @@ impl Parser {
                     | RawToken::GreaterThanEqual => {
                         self.step();
                         left = self.parse_infix_expr(left.unwrap());
+                    }
+                    RawToken::Assign => {
+                        self.step();
+                        left = self.parse_assign_expr(left.unwrap());
                     }
                     RawToken::Dot => {
                         self.step();
@@ -349,6 +353,10 @@ impl Parser {
             None => return None,
         };
 
+        if self.next_token_is(&RawToken::Semicolon) {
+            self.step();
+        }
+
         Some(Statement::Use(ident, expr))
     }
 
@@ -387,30 +395,6 @@ impl Parser {
         }
 
         Some(Statement::Let(ident, expr))
-    }
-
-    fn parse_assign_stmt(&mut self) -> Option<Statement> {
-        let ident = match self.parse_ident() {
-            Some(ident) => ident,
-            _ => return None,
-        };
-
-        if !self.expect_next_token(RawToken::Assign) {
-            return None;
-        }
-
-        self.step();
-
-        let expr = match self.parse_expression(Precedence::Lowest) {
-            Some(expr) => expr,
-            None => return None,
-        };
-
-        if self.next_token_is(&RawToken::Semicolon) {
-            self.step();
-        }
-
-        Some(Statement::Assign(ident, expr))
     }
 
     fn parse_func_stmt(&mut self) -> Option<Statement> {
@@ -494,6 +478,17 @@ impl Parser {
         }
     }
 
+    fn parse_assign_expr(&mut self, left: Expression) -> Option<Expression> {
+        self.step();
+
+        let expr = match self.parse_expression(Precedence::Lowest) {
+            Some(expr) => expr,
+            None => return None,
+        };
+
+        Some(Expression::Assign(Box::new(left), Box::new(expr)))
+    }
+
     fn parse_prefix_expr(&mut self) -> Option<Expression> {
         let Some((current, _)) = self.current_token() else { return None };
         let prefix = match current {
@@ -515,6 +510,7 @@ impl Parser {
         let Some((current, _)) = self.current_token() else { return None };
         let infix = match current {
             RawToken::Plus => Infix::Plus,
+            RawToken::Assign => Infix::Plus,
             RawToken::Minus => Infix::Minus,
             RawToken::Slash => Infix::Divide,
             RawToken::Asterisk => Infix::Multiply,
@@ -741,6 +737,7 @@ fn token_to_precedence(token: &RawToken) -> Precedence {
         RawToken::Slash | RawToken::Asterisk | RawToken::Mod | RawToken::Pow => Precedence::Product,
         RawToken::BracketL => Precedence::Index,
         RawToken::Dot => Precedence::Index,
+        RawToken::Assign => Precedence::Assign,
         RawToken::ParenL => Precedence::Call,
         RawToken::And | RawToken::Or => Precedence::BoolUnions,
         _ => Precedence::Lowest,

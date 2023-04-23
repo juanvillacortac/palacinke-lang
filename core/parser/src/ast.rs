@@ -7,7 +7,6 @@ pub enum Statement {
     Use(Option<Ident>, Expression),
     Pub(Box<Statement>),
     Let(Ident, Expression),
-    Assign(Ident, Expression),
     FunctionLet(Ident, Expression),
     Return(Expression),
     Do(Option<Expression>, BlockStatement),
@@ -28,6 +27,7 @@ pub enum Literal {
 #[derive(PartialEq, Clone, Debug)]
 pub enum Expression {
     Ident(Ident),
+    Assign(Box<Expression>, Box<Expression>),
     Literal(Literal),
     Prefix(Prefix, Box<Expression>),
     Infix(Infix, Box<Expression>, Box<Expression>),
@@ -87,5 +87,6 @@ pub enum Precedence {
     Prefix,      // -X or !X
     Call,        // myFunction(x)
     Index,       // array[index]
+    Assign,      // =
     Highest,
 }

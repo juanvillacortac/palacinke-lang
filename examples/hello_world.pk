@@ -1,10 +1,15 @@
-use foo './bar.pk'
+# use './hello_world.pk'
 
-pub let bar = fn () {
-  return true
-}
+# pub let bar = fn () {
+#   return true
+# }
+# 
+# pub fn foo() {
+#   let x = if true { 1 } else { 2 } 
+#   nil
+# }
 
-pub fn foo() {
-  let x = if true { 1 } else { 2 } 
-  nil
+pub let x = 1 + 10
+pub let y = fn () {
+  1
 }

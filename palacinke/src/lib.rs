@@ -1,5 +1,6 @@
 use crate::errors::*;
 use pk_compiler::{
+    modules_table::ModulesTable,
     objects::Object,
     symbols_table::{ConstantsPool, SymbolTable},
     Compiler,
@@ -20,8 +21,9 @@ pub fn eval_from_buff(source: &str) -> Result<Object, EvaluationError> {
 
 pub fn eval(module: Module) -> Result<Object, EvaluationError> {
     let mut symbols_table = SymbolTable::new();
+    let mut modules_table = ModulesTable::new();
     let mut constants = ConstantsPool::new();
-    let mut compiler = Compiler::new(&mut symbols_table, &mut constants);
+    let mut compiler = Compiler::new(&mut symbols_table, &mut constants, &mut modules_table, "");
     let bytecode = match compiler.compile(module) {
         Ok(bytecode) => bytecode,
         Err(err) => {
@@ -30,7 +32,8 @@ pub fn eval(module: Module) -> Result<Object, EvaluationError> {
     };
 
     let mut globals = new_globals_store();
-    let mut vm = VM::new_state(&bytecode, &mut globals);
+    let mut modules = new_globals_store();
+    let mut vm = VM::new_state(&bytecode, modules_table, &mut globals, &mut modules);
     match vm.eval() {
         Err(err) => Err(EvaluationError::VMError(err)),
         Ok(result) => Ok((*result).clone()),
